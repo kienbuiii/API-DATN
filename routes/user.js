@@ -308,7 +308,13 @@ router.get('/profile/:userId', auth, async (req, res) => {
         dang_theo_doi: user.following.length,
         bai_viet: user.posts ? user.posts.length : 0 // Giả sử có trường posts
       },
-      isFollowing: isFollowing
+      email: user.email,
+      sdt: user.sdt,
+      diachi: user.diachi,
+      tinhtranghonnhan:user.tinhtranghonnhan,
+      sex: user.sex,
+      isFollowing: isFollowing,
+      xac_minh_danh_tinh: user.xacMinhDanhTinh
     };
 
     

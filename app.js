@@ -26,6 +26,8 @@ app.use('/api/scan', scanRoutes);
 app.use('/api/travel-posts', travelPostRoutes);
 app.use('/api/soThich', soThich);
 
+
+
 // Online users storage
 let onlineUsers = new Map();
 
@@ -185,5 +187,22 @@ app.get('/api/messages/:senderId/:receiverId', authMiddleware, async (req, res) 
     }
 });
 
-const PORT = process.env.PORT || 3001;
+// Route để gửi tin nhắn SMS
+app.post('/api/send-sms', async (req, res) => {
+    const { to, body } = req.body; // Lấy số điện thoại và nội dung tin nhắn từ request body
+
+    try {
+        const message = await twilioClient.messages.create({
+            body,
+            from: process.env.TWILIO_PHONE_NUMBER, // Số điện thoại Twilio của bạn
+            to
+        });
+        res.json({ success: true, messageSid: message.sid });
+    } catch (error) {
+        console.error('Error sending SMS:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
