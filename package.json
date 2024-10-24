@@ -16,6 +16,7 @@
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^1.41.3",
+    "code": "^5.2.4",
     "dotenv": "^16.4.5",
     "expo-camera": "^15.0.16",
     "express": "^4.21.0",
