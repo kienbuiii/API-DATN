@@ -38,6 +38,64 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
     res.status(500).json({ message: 'Lỗi khi lưu bài viết!', error: err.message });
   }
 });
+router.put('/edit-post/:postId', auth, upload.array('newImages', 5), async (req, res) => {
+  try {
+    console.log('Received edit post request:', req.body);
+    console.log('Files:', req.files);
+
+    const { title, existingImages } = req.body;
+    const postId = req.params.postId;
+
+    // Check if the post exists
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Update title
+    post.title = title;
+
+    // Handle existing images
+    const existingImageUrls = Array.isArray(existingImages) ? existingImages : [existingImages].filter(Boolean);
+    
+    // Handle new images
+    const newImageUrls = req.files ? req.files.map(file => file.path) : [];
+
+    // Combine existing and new image URLs
+    post.images = [...existingImageUrls, ...newImageUrls];
+
+    console.log('Updated post images:', post.images);
+
+    const updatedPost = await post.save();
+    res.status(200).json(updatedPost);
+  } catch (err) {
+    console.error('Error editing post:', err);
+    res.status(500).json({ message: 'Error editing post', error: err.message });
+  }
+});
+router.delete('/delete-post/:postId', auth, async (req, res) => {
+  try {
+    const postId = req.params.postId;
+
+    // Kiểm tra xem bài viết có tồn tại không
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ message: 'Không tìm thấy bài viết' });
+    }
+
+    // Kiểm tra quyền sở hữu bài viết (nếu cần)
+    if (post.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Bạn không có quyền xóa bài viết này' });
+    }
+
+    // Xóa bài viết
+    await Post.findByIdAndDelete(postId);
+    res.status(200).json({ message: 'Bài viết đã được xóa thành công' });
+  } catch (err) {
+    console.error('Lỗi khi xóa bài viết:', err);
+    res.status(500).json({ message: 'Lỗi khi xóa bài viết', error: err.message });
+  }
+});
 router.get('/user/:userId', auth, async (req, res) => {
   try {
     const userId = req.params.userId;

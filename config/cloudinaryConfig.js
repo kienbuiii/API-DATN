@@ -13,7 +13,7 @@ const storage = new CloudinaryStorage({
   params: {
     folder: 'DuAnTotNghiep', // Tên folder trên Cloudinary
     allowed_formats: ['jpg', 'png', 'jpeg', 'gif'], // Định dạng file cho phép
-    transformation: [{ width: 500, height: 500, crop: 'limit' }] // Tùy chọn: giới hạn kích thước ảnh
+    transformation: [{ width: 2000, height: 2000, crop: 'limit' }] // Tùy chọn: giới hạn kích thước ảnh
   }
 });
 
