@@ -8,9 +8,29 @@ router.get('/', authMiddleware, async (req, res) => {
     try {
         const notifications = await Notification.find({ recipient: req.user.id })
             .populate('sender', 'username avatar')
-            .populate('post', 'title')
+            .populate('post', 'title images')
             .sort({ createdAt: -1 });
         res.json(notifications);
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Đánh dấu một notification là đã đọc
+router.put('/:id/mark-read', authMiddleware, async (req, res) => {
+    try {
+        const notification = await Notification.findByIdAndUpdate(
+            req.params.id,
+            { read: true },
+            { new: true }
+        ).populate('sender', 'username avatar')
+         .populate('post', 'title images');
+
+        if (!notification) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+
+        res.json(notification);
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
@@ -23,7 +43,13 @@ router.put('/mark-all-read', authMiddleware, async (req, res) => {
             { recipient: req.user.id, read: false },
             { read: true }
         );
-        res.json({ message: 'All notifications marked as read' });
+
+        const updatedNotifications = await Notification.find({ recipient: req.user.id })
+            .populate('sender', 'username avatar')
+            .populate('post', 'title images')
+            .sort({ createdAt: -1 });
+
+        res.json(updatedNotifications);
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
@@ -32,8 +58,24 @@ router.put('/mark-all-read', authMiddleware, async (req, res) => {
 // Xóa một notification
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
-        await Notification.findByIdAndDelete(req.params.id);
-        res.json({ message: 'Notification deleted' });
+        const notification = await Notification.findByIdAndDelete(req.params.id);
+        if (!notification) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+        res.json({ message: 'Notification deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Lấy số lượng thông báo chưa đọc
+router.get('/unread-count', authMiddleware, async (req, res) => {
+    try {
+        const count = await Notification.countDocuments({
+            recipient: req.user.id,
+            read: false
+        });
+        res.json({ unreadCount: count });
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }

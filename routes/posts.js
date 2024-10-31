@@ -181,15 +181,20 @@ router.get('/all-posts', async (req, res) => {
 });
 router.post('/:postId/like', auth, async (req, res) => {
   try {
+    // Populate đầy đủ thông tin user để hiển thị trong thông báo
     const post = await Post.findById(req.params.postId)
-      .populate('user', 'username');
+      .populate('user', 'username avatar');
     
     if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
+      return res.status(404).json({ message: 'Không tìm thấy bài viết' });
     }
 
     const userId = req.user.id;
     const likeIndex = post.likes.indexOf(userId);
+    
+    // Lấy thông tin người like
+    const likeUser = await User.findById(userId).select('username avatar');
+    console.log('Like user:', likeUser);
     
     if (likeIndex !== -1) {
       // Unlike
@@ -200,36 +205,45 @@ router.post('/:postId/like', auth, async (req, res) => {
       post.likes.push(userId);
       post.likesCount += 1;
 
-      // Chỉ gửi thông báo khi like (không phải unlike) và không phải tự like bài của mình
+      // Chỉ gửi thông báo khi không phải tự like bài của mình
       if (post.user._id.toString() !== userId) {
-        console.log('Sending notification for like:', {
+        const notificationData = {
           recipient: post.user._id,
           sender: userId,
           type: 'LIKE',
-          content: `đã thích bài viết của bạn`,
-          post: post._id
-        });
+          content: `${likeUser.username} đã thích bài viết của bạn`,
+          post: post._id,
+          actionType: 'like'
+        };
 
-        await emitNotification({
-          recipient: post.user._id,
-          sender: userId,
-          type: 'LIKE',
-          content: `đã thích bài viết của bạn`,
-          post: post._id
-        });
+        console.log('Creating notification with data:', notificationData);
+
+        try {
+          const notification = await emitNotification(notificationData);
+          console.log('Notification created:', notification);
+        } catch (notifError) {
+          console.error('Error creating notification:', notifError);
+        }
       }
     }
 
     await post.save();
 
     res.json({ 
-      message: likeIndex !== -1 ? 'Post unliked successfully' : 'Post liked successfully', 
+      success: true,
+      message: likeIndex !== -1 ? 'Đã bỏ thích bài viết' : 'Đã thích bài viết',
       likesCount: post.likesCount,
-      likes: post.likes
+      likes: post.likes,
+      isLiked: likeIndex === -1
     });
+
   } catch (error) {
-    console.error('Error processing like:', error);
-    res.status(500).json({ message: 'Error processing like', error: error.message });
+    console.error('Error in like/unlike:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Lỗi khi xử lý like/unlike', 
+      error: error.message 
+    });
   }
 });
 router.get('/map-posts', auth, async (req, res) => {
