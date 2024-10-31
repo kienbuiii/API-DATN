@@ -4,6 +4,7 @@ const TravelPost = require('../models/TravelPost');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { upload } = require('../config/cloudinaryConfig');
+const mongoose = require('mongoose'); // 
 
 // Create a travel post
 router.post('/create', auth, upload.array('image', 5), async (req, res) => {
@@ -115,64 +116,104 @@ function calculateAge(birthday) {
 }
 router.put('/edit/:postId', auth, upload.array('images', 5), async (req, res) => {
   try {
-    const { title, startDate, endDate, destinationLat, destinationLng, destinationName } = req.body;
+    const { 
+      title, 
+      startDate, 
+      endDate, 
+      destinationLat, 
+      destinationLng, 
+      destinationName, 
+      imagesToDelete 
+    } = req.body;
+    
     const postId = req.params.postId;
 
-    // Kiểm tra xem bài viết có tồn tại không
+    // Kiểm tra bài viết tồn tại
     const travelPost = await TravelPost.findById(postId);
     if (!travelPost) {
       return res.status(404).json({ message: 'Không tìm thấy bài viết du lịch' });
     }
 
-    // Kiểm tra quyền sở hữu bài viết
+    // Kiểm tra quyền sở hữu
     if (travelPost.author.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Bạn không có quyền chỉnh sửa bài viết này' });
     }
 
-    // Cập nhật thông tin
-    if (title) travelPost.title = title;
-    if (startDate) travelPost.startDate = new Date(startDate);
-    if (endDate) travelPost.endDate = new Date(endDate);
+    // Cập nhật thông tin cơ bản
+    const updates = {};
     
-    // Cập nhật vị trí muốn đến
+    if (title) updates.title = title;
+    
+    // Xử lý ngày tháng an toàn
+    if (startDate) {
+      try {
+        updates.startDate = new Date(startDate);
+        if (isNaN(updates.startDate.getTime())) {
+          throw new Error('Invalid start date');
+        }
+      } catch (error) {
+        return res.status(400).json({ message: 'Ngày bắt đầu không hợp lệ' });
+      }
+    }
+    
+    if (endDate) {
+      try {
+        updates.endDate = new Date(endDate);
+        if (isNaN(updates.endDate.getTime())) {
+          throw new Error('Invalid end date');
+        }
+      } catch (error) {
+        return res.status(400).json({ message: 'Ngày kết thúc không hợp lệ' });
+      }
+    }
+
+    // Cập nhật địa điểm
     if (destinationLat && destinationLng) {
-      travelPost.destination = {
+      updates.destination = {
         type: 'Point',
         coordinates: [parseFloat(destinationLng), parseFloat(destinationLat)]
       };
     }
-    if (destinationName) travelPost.destinationName = destinationName;
+    
+    if (destinationName) updates.destinationName = destinationName;
 
     // Xử lý ảnh mới
     if (req.files && req.files.length > 0) {
       const newImageUrls = req.files.map(file => file.path);
-      travelPost.images = [...travelPost.images, ...newImageUrls];
+      updates.images = [...(travelPost.images || []), ...newImageUrls];
     }
 
     // Xử lý xóa ảnh
-    const { imagesToDelete } = req.body;
     if (imagesToDelete) {
       const imagesToDeleteArray = Array.isArray(imagesToDelete) ? imagesToDelete : [imagesToDelete];
-      travelPost.images = travelPost.images.filter(img => !imagesToDeleteArray.includes(img));
+      console.log('Images to delete:', imagesToDeleteArray);
+      
+      // Lọc ra những ảnh không nằm trong danh sách xóa
+      const currentImages = updates.images || travelPost.images || [];
+      updates.images = currentImages.filter(img => !imagesToDeleteArray.includes(img));
+      
+      console.log('Updated images:', updates.images);
     }
 
-    // Lưu các thay đổi
+    // Cập nhật bài viết với những thay đổi mới
+    Object.assign(travelPost, updates);
+    
+    // Lưu thay đổi
     const updatedTravelPost = await travelPost.save();
 
     res.status(200).json({
       message: 'Bài viết du lịch đã được cập nhật thành công',
       travelPost: updatedTravelPost
     });
+    
   } catch (error) {
     console.error('Lỗi khi chỉnh sửa bài viết du lịch:', error);
-    res.status(500).json({ 
-      message: 'Lỗi server khi chỉnh sửa bài viết du lịch', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Lỗi server khi chỉnh sửa bài viết du lịch',
+      error: error.message
     });
   }
 });
-// ... existing code ...
-
 router.delete('/delete/:postId', auth, async (req, res) => {
   try {
     const postId = req.params.postId;
@@ -196,6 +237,175 @@ router.delete('/delete/:postId', auth, async (req, res) => {
     res.status(500).json({ 
       message: 'Lỗi server khi xóa bài viết du lịch', 
       error: error.message
+    });
+  }
+});
+
+router.get('/my-posts', auth, async (req, res) => {
+  try {
+    const userId = req.user.id; // Get the logged-in user's ID from the auth middleware
+
+    const userPosts = await TravelPost.find({ author: userId })
+      .populate('author', 'name username avatar')
+      .sort('-createdAt');
+
+    res.json(userPosts);
+  } catch (error) {
+    console.error('Error fetching user posts:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// chi tiết  travel post
+router.get('/:postId', auth, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    
+    // Validate postId
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({ message: 'Invalid post ID format' });
+    }
+
+    const post = await TravelPost.findById(postId)
+      .populate('author', 'username avatar bio email')
+      .lean();
+
+    if (!post) {
+      return res.status(404).json({ message: 'Không tìm thấy bài viết' });
+    }
+
+    res.json(post);
+  } catch (error) {
+    console.error('Error in getTravelPostDetail:', error);
+    res.status(500).json({ 
+      message: 'Lỗi server khi lấy chi tiết bài viết',
+      error: error.message 
+    });
+  }
+});
+
+router.post('/:postId/toggle-like', auth, async (req, res) => {
+  try {
+    const post = await TravelPost.findById(req.params.postId);
+    if (!post) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Không tìm thấy bài viết' 
+      });
+    }
+
+    // Chuyển ObjectId thành string để so sánh
+    const userId = req.user.id.toString();
+    const likeIndex = post.likes.findIndex(id => id.toString() === userId);
+
+    if (likeIndex > -1) {
+      // Unlike - remove user from likes array
+      post.likes.splice(likeIndex, 1);
+    } else {
+      // Like - add user to likes array
+      post.likes.push(userId);
+    }
+
+    await post.save();
+
+    return res.json({
+      success: true,
+      likesCount: post.likes.length,
+      isLiked: likeIndex === -1, // true if just liked, false if just unliked
+      message: likeIndex === -1 ? 'Đã thích bài viết' : 'Đã bỏ thích bài viết'
+    });
+
+  } catch (error) {
+    console.error('Error toggling like:', error);
+    return res.status(500).json({ 
+      success: false,
+      message: 'Lỗi server',
+      error: error.message 
+    });
+  }
+});
+// Thêm route để tìm kiếm travel posts
+router.get('/search', auth, async (req, res) => {
+  try {
+    const { query, startDate, endDate, interests } = req.query;
+    
+    const searchCriteria = {};
+
+    if (query) {
+      searchCriteria.$or = [
+        { title: { $regex: query, $options: 'i' } },
+        { destinationName: { $regex: query, $options: 'i' } }
+      ];
+    }
+
+    if (startDate) {
+      searchCriteria.startDate = { $gte: new Date(startDate) };
+    }
+
+    if (endDate) {
+      searchCriteria.endDate = { $lte: new Date(endDate) };
+    }
+
+    if (interests) {
+      searchCriteria.interests = { 
+        $in: interests.split(',').map(interest => interest.trim()) 
+      };
+    }
+
+    const posts = await TravelPost.find(searchCriteria)
+      .populate('author', 'username avatar')
+      .sort('-createdAt');
+
+    res.json(posts);
+  } catch (error) {
+    console.error('Error searching posts:', error);
+    res.status(500).json({ message: 'Lỗi server', error: error.message });
+  }
+});
+// Thêm route để lấy travel posts của một user cụ thể
+router.get('/user/:userId', auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Validate userId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    const travelPosts = await TravelPost.find({ author: userId })
+      .populate('author', 'username avatar')
+      .sort('-createdAt');
+
+    // Thêm thông tin likes và format dữ liệu
+    const formattedPosts = travelPosts.map(post => ({
+      _id: post._id,
+      title: post.title,
+      images: post.images,
+      startDate: post.startDate,
+      endDate: post.endDate,
+      currentLocation: post.currentLocation,
+      destination: post.destination,
+      destinationName: post.destinationName,
+      likes: post.likes,
+      likesCount: post.likes.length,
+      isLiked: post.likes.includes(req.user.id),
+      author: post.author,
+      createdAt: post.createdAt,
+      interests: post.interests
+    }));
+
+    res.json({
+      success: true,
+      posts: formattedPosts,
+      count: formattedPosts.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching user travel posts:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Lỗi server khi lấy bài viết du lịch của người dùng',
+      error: error.message 
     });
   }
 });
