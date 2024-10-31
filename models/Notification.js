@@ -14,19 +14,23 @@ const notificationSchema = new mongoose.Schema({
     type: {
         type: String,
         required: true,
-        enum: ['like', 'comment', 'follow', 'mention'] // các loại thông báo
+        enum: ['LIKE', 'UNLIKE', 'COMMENT', 'FOLLOW', 'MESSAGE']
+    },
+    content: {
+        type: String,
+        required: true
     },
     post: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Post'
     },
+    actionType: {
+        type: String,
+        enum: ['like', 'unlike', 'comment', 'follow', 'message']
+    },
     read: {
         type: Boolean,
         default: false
-    },
-    content: {
-        type: String,
-        required: true
     }
 }, {
     timestamps: true

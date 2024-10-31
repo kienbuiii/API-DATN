@@ -19,7 +19,13 @@ const messageSchema = new mongoose.Schema({
         type: String,
         enum: ['sent', 'delivered', 'read'],
         default: 'sent'
-    }
-}, { timestamps: true });
+    },
+    deletedFor: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }]
+}, {
+    timestamps: true
+});
 
 module.exports = mongoose.model('Message', messageSchema);
