@@ -154,7 +154,7 @@ router.get('/post/:id', auth, async (req, res) => {
 });
 
 // Route để hiển thị tất cả bài viết kèm thông tin người đăng
-router.get('/all-posts', auth, async (req, res) => {
+router.get('/all-posts', async (req, res) => {
   try {
     const posts = await Post.find()
       .populate('user', 'username avatar') // Populate thông tin người dùng
@@ -180,28 +180,41 @@ router.get('/all-posts', auth, async (req, res) => {
 });
 router.post('/:postId/like', auth, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.postId);
+    const post = await Post.findById(req.params.postId)
+      .populate('user', 'username'); // Thêm populate để lấy thông tin người đăng bài
+
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Lấy ID người dùng từ token thông qua middleware auth
-    const userId = req.user.id; // Đảm bảo rằng middleware auth đặt user.id vào req.user
+    const userId = req.user.id;
+    const currentUser = await User.findById(userId);
 
     if (!userId) {
       return res.status(401).json({ message: 'User not authenticated' });
     }
 
-    // Kiểm tra xem người dùng đã like bài viết chưa
     const likeIndex = post.likes.indexOf(userId);
     if (likeIndex !== -1) {
-      // Nếu đã like, thì unlike
+      // Unlike
       post.likes.splice(likeIndex, 1);
       post.likesCount = Math.max(0, post.likesCount - 1);
     } else {
-      // Nếu chưa like, thì thêm like
+      // Like và gửi thông báo
       post.likes.push(userId);
       post.likesCount += 1;
+
+      // Chỉ gửi thông báo khi like (không gửi khi unlike)
+      if (post.user._id.toString() !== userId) { // Không gửi thông báo nếu user like bài viết của chính mình
+        const sendNotification = req.app.get('sendNotification');
+        await sendNotification({
+          recipient: post.user._id,
+          sender: userId,
+          type: 'like',
+          post: post._id,
+          content: `${currentUser.username} đã thích bài viết của bạn`
+        });
+      }
     }
 
     await post.save();
