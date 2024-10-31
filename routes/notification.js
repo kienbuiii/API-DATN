@@ -1,65 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const Notification = require('../models/Notification');
-const auth = require('../middleware/auth');
+const authMiddleware = require('../middleware/auth');
 
-// Lấy tất cả thông báo của user
-router.get('/:userId', auth, async (req, res) => {
+// Lấy tất cả notifications của user
+router.get('/', authMiddleware, async (req, res) => {
     try {
-        const notifications = await Notification.find({ 
-            recipient: req.params.userId 
-        })
-        .sort({ createdAt: -1 })
-        .populate('sender', 'username avatar')
-        .populate('post', 'content');
-        
+        const notifications = await Notification.find({ recipient: req.user.id })
+            .populate('sender', 'username avatar')
+            .populate('post', 'title')
+            .sort({ createdAt: -1 });
         res.json(notifications);
     } catch (error) {
-        console.error('Error fetching notifications:', error);
-        res.status(500).json({ message: 'Error fetching notifications' });
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
-// Đánh dấu thông báo đã đọc
-router.put('/:notificationId/read', auth, async (req, res) => {
-    try {
-        const notification = await Notification.findByIdAndUpdate(
-            req.params.notificationId,
-            { read: true },
-            { new: true }
-        );
-        if (!notification) {
-            return res.status(404).json({ message: 'Notification not found' });
-        }
-        res.json(notification);
-    } catch (error) {
-        res.status(500).json({ message: 'Error updating notification' });
-    }
-});
-
-// Xóa thông báo
-router.delete('/:notificationId', auth, async (req, res) => {
-    try {
-        const notification = await Notification.findByIdAndDelete(req.params.notificationId);
-        if (!notification) {
-            return res.status(404).json({ message: 'Notification not found' });
-        }
-        res.json({ message: 'Notification deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ message: 'Error deleting notification' });
-    }
-});
-
-// Đánh dấu tất cả thông báo đã đọc
-router.put('/read-all/:userId', auth, async (req, res) => {
+// Đánh dấu tất cả notifications là đã đọc
+router.put('/mark-all-read', authMiddleware, async (req, res) => {
     try {
         await Notification.updateMany(
-            { recipient: req.params.userId, read: false },
+            { recipient: req.user.id, read: false },
             { read: true }
         );
         res.json({ message: 'All notifications marked as read' });
     } catch (error) {
-        res.status(500).json({ message: 'Error updating notifications' });
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Xóa một notification
+router.delete('/:id', authMiddleware, async (req, res) => {
+    try {
+        await Notification.findByIdAndDelete(req.params.id);
+        res.json({ message: 'Notification deleted' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 

@@ -6,6 +6,7 @@ const path = require('path');
 const auth = require('../middleware/auth')
 const User = require('../models/User');
 const { upload } = require('../config/cloudinaryConfig');
+const { emitNotification } = require('../socketHandlers');
 
 // Hàm helper để lấy URL Cloudinary
 const getCloudinaryUrl = (path) => {
@@ -181,38 +182,40 @@ router.get('/all-posts', async (req, res) => {
 router.post('/:postId/like', auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.postId)
-      .populate('user', 'username'); // Thêm populate để lấy thông tin người đăng bài
-
+      .populate('user', 'username');
+    
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
     const userId = req.user.id;
-    const currentUser = await User.findById(userId);
-
-    if (!userId) {
-      return res.status(401).json({ message: 'User not authenticated' });
-    }
-
     const likeIndex = post.likes.indexOf(userId);
+    
     if (likeIndex !== -1) {
       // Unlike
       post.likes.splice(likeIndex, 1);
       post.likesCount = Math.max(0, post.likesCount - 1);
     } else {
-      // Like và gửi thông báo
+      // Like
       post.likes.push(userId);
       post.likesCount += 1;
 
-      // Chỉ gửi thông báo khi like (không gửi khi unlike)
-      if (post.user._id.toString() !== userId) { // Không gửi thông báo nếu user like bài viết của chính mình
-        const sendNotification = req.app.get('sendNotification');
-        await sendNotification({
+      // Chỉ gửi thông báo khi like (không phải unlike) và không phải tự like bài của mình
+      if (post.user._id.toString() !== userId) {
+        console.log('Sending notification for like:', {
           recipient: post.user._id,
           sender: userId,
-          type: 'like',
-          post: post._id,
-          content: `${currentUser.username} đã thích bài viết của bạn`
+          type: 'LIKE',
+          content: `đã thích bài viết của bạn`,
+          post: post._id
+        });
+
+        await emitNotification({
+          recipient: post.user._id,
+          sender: userId,
+          type: 'LIKE',
+          content: `đã thích bài viết của bạn`,
+          post: post._id
         });
       }
     }
