@@ -31,9 +31,18 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  blocked: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    timestamp: { type: Date, default: Date.now }
+  }],
+  blockedBy: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    timestamp: { type: Date, default: Date.now }
+  }],
   resetPasswordOtp: String,
   resetPasswordExpires: Date
-}, {
+}, 
+{
   timestamps: true
 });
 

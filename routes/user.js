@@ -461,4 +461,253 @@ router.post('/change-password', auth, async (req, res) => {
     res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
   }
 });
+router.post('/block/:userId', auth, async (req, res) => {
+  try {
+    const userToBlock = await User.findById(req.params.userId);
+    const currentUser = await User.findById(req.user.id);
+
+    if (!userToBlock) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Kiểm tra xem đã block chưa
+    const alreadyBlocked = currentUser.blocked.some(
+      block => block.user.toString() === req.params.userId
+    );
+
+    if (alreadyBlocked) {
+      return res.status(400).json({ message: 'Người dùng này đã bị chặn' });
+    }
+
+    // Thêm vào danh sách blocked
+    currentUser.blocked.push({ user: req.params.userId });
+    userToBlock.blockedBy.push({ user: req.user.id });
+
+    // Xóa follow nếu đang follow
+    if (currentUser.following.includes(userToBlock._id)) {
+      currentUser.following = currentUser.following.filter(
+        id => id.toString() !== req.params.userId
+      );
+      currentUser.followingCount = Math.max(0, currentUser.followingCount - 1);
+
+      userToBlock.followers = userToBlock.followers.filter(
+        id => id.toString() !== req.user.id
+      );
+      userToBlock.followersCount = Math.max(0, userToBlock.followersCount - 1);
+    }
+
+    // Xóa follow ngược lại nếu người bị block đang follow mình
+    if (userToBlock.following.includes(currentUser._id)) {
+      userToBlock.following = userToBlock.following.filter(
+        id => id.toString() !== req.user.id
+      );
+      userToBlock.followingCount = Math.max(0, userToBlock.followingCount - 1);
+
+      currentUser.followers = currentUser.followers.filter(
+        id => id.toString() !== req.params.userId
+      );
+      currentUser.followersCount = Math.max(0, currentUser.followersCount - 1);
+    }
+
+    await Promise.all([
+      currentUser.save(),
+      userToBlock.save()
+    ]);
+
+    res.json({ 
+      message: 'Đã chặn người dùng thành công',
+      currentUserStats: {
+        followingCount: currentUser.followingCount,
+        followersCount: currentUser.followersCount
+      },
+      blockedUserStats: {
+        followingCount: userToBlock.followingCount,
+        followersCount: userToBlock.followersCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Block user error:', error);
+    res.status(500).json({ 
+      message: 'Lỗi server',
+      error: error.message 
+    });
+  }
+});
+
+// Cập nhật middleware kiểm tra block status
+const checkBlockStatus = async (req, res, next) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+    const targetUser = await User.findById(req.params.userId);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    const isBlocked = currentUser.blocked.some(
+      block => block.user.toString() === req.params.userId
+    );
+    const isBlockedBy = targetUser.blocked.some(
+      block => block.user.toString() === req.user.id
+    );
+
+    if (isBlocked || isBlockedBy) {
+      return res.status(403).json({
+        message: 'Không thể thực hiện hành động này do đã chặn hoặc bị chặn',
+        isBlocked,
+        isBlockedBy
+      });
+    }
+
+    req.currentUser = currentUser;
+    req.targetUser = targetUser;
+    next();
+  } catch (error) {
+    console.error('Error checking block status:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+};
+// Tương tự cho route unblock
+router.post('/unblock/:userId', auth, async (req, res) => {
+  try {
+    const userToUnblock = await User.findById(req.params.userId);
+    const currentUser = await User.findById(req.user.id);  // Thay đổi _id thành id
+
+    if (!userToUnblock) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Remove from blocked list
+    currentUser.blocked = currentUser.blocked.filter(
+      block => block.user.toString() !== req.params.userId
+    );
+    
+    // Remove from blockedBy list
+    userToUnblock.blockedBy = userToUnblock.blockedBy.filter(
+      block => block.user.toString() !== req.user.id.toString()  // Thay đổi _id thành id
+    );
+
+    await Promise.all([currentUser.save(), userToUnblock.save()]);
+
+    res.json({ message: 'Đã bỏ chặn người dùng thành công' });
+  } catch (error) {
+    console.error('Unblock user error:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+router.get('/blocked-users', auth, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id)
+      .populate({
+        path: 'blocked.user',
+        select: 'username avatar email'  // Chọn các trường muốn lấy
+      });
+
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Format lại dữ liệu trước khi gửi về client
+    const blockedUsers = currentUser.blocked.map(block => ({
+      id: block.user._id,
+      username: block.user.username,
+      avatar: block.user.avatar,
+      email: block.user.email,
+      blockedAt: block.timestamp
+    }));
+
+    res.json(blockedUsers);
+  } catch (error) {
+    console.error('Error getting blocked users:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+router.get('/check-block-status/:userId', auth, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+    const targetUser = await User.findById(req.params.userId);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Kiểm tra block status
+    const isBlocked = currentUser.blocked.some(
+      block => block.user.toString() === req.params.userId
+    );
+    const isBlockedBy = targetUser.blocked.some(
+      block => block.user.toString() === req.user.id
+    );
+
+    // Kiểm tra thời gian block nếu có
+    let blockInfo = null;
+    if (isBlocked) {
+      const blockRecord = currentUser.blocked.find(
+        block => block.user.toString() === req.params.userId
+      );
+      blockInfo = {
+        timestamp: blockRecord.timestamp,
+        duration: Date.now() - new Date(blockRecord.timestamp).getTime()
+      };
+    }
+
+    res.json({
+      isBlocked,
+      isBlockedBy,
+      blockInfo,
+      canInteract: !isBlocked && !isBlockedBy
+    });
+
+  } catch (error) {
+    console.error('Error checking block status:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+router.get('/travel-posts/:userId', auth, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+    const targetUser = await User.findById(req.params.userId);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Kiểm tra block status
+    const isBlocked = currentUser.blocked.some(
+      block => block.user.toString() === req.params.userId
+    );
+    const isBlockedBy = targetUser.blocked.some(
+      block => block.user.toString() === req.user.id
+    );
+
+    if (isBlocked || isBlockedBy) {
+      return res.json({
+        isBlocked,
+        isBlockedBy,
+        restricted: true,
+        message: isBlockedBy ? 
+          'Bạn đã bị người dùng này chặn' : 
+          'Bạn đã chặn người dùng này',
+        posts: []  // Trả về mảng rỗng khi bị chặn
+      });
+    }
+
+    // Nếu không bị chặn, lấy travel posts
+    const travelPosts = await TravelPost.find({ user: req.params.userId })
+      .populate('user', 'username avatar')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      isBlocked,
+      isBlockedBy,
+      restricted: false,
+      posts: travelPosts
+    });
+
+  } catch (error) {
+    console.error('Error getting travel posts:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
 module.exports = router;
