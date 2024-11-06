@@ -66,7 +66,8 @@ const TravelPostSchema = new mongoose.Schema({
 TravelPostSchema.virtual('likesCount').get(function() {
   return this.likes ? this.likes.length : 0;
 });
-
+TravelPostSchema.index({ destination: '2dsphere' });
+TravelPostSchema.index({ title: 'text', destinationName: 'text' });
 // Thêm index cho likes để tối ưu performance
 TravelPostSchema.index({ likes: 1 });
 

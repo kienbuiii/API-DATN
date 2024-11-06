@@ -324,42 +324,49 @@ router.post('/:postId/toggle-like', auth, async (req, res) => {
     });
   }
 });
-// Thêm route để tìm kiếm travel posts
-router.get('/search', auth, async (req, res) => {
+
+
+router.get('/a/search', async (req, res) => {
   try {
-    const { query, startDate, endDate, interests } = req.query;
-    
-    const searchCriteria = {};
+    const { query, page = 1, limit = 10 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    if (query) {
-      searchCriteria.$or = [
+    const searchCondition = {
+      $or: [
         { title: { $regex: query, $options: 'i' } },
-        { destinationName: { $regex: query, $options: 'i' } }
-      ];
-    }
+        { destinationName: { $regex: query, $options: 'i' } },
+        { interests: { $regex: query, $options: 'i' } }
+      ]
+    };
 
-    if (startDate) {
-      searchCriteria.startDate = { $gte: new Date(startDate) };
-    }
+    // Thực hiện song song cả hai truy vấn
+    const [results, total] = await Promise.all([
+      TravelPost.find(searchCondition)
+        .populate('author', 'username avatar')
+        .sort('-createdAt')
+        .skip(skip)
+        .limit(parseInt(limit)),
+      TravelPost.countDocuments(searchCondition)
+    ]);
 
-    if (endDate) {
-      searchCriteria.endDate = { $lte: new Date(endDate) };
-    }
-
-    if (interests) {
-      searchCriteria.interests = { 
-        $in: interests.split(',').map(interest => interest.trim()) 
-      };
-    }
-
-    const posts = await TravelPost.find(searchCriteria)
-      .populate('author', 'username avatar')
-      .sort('-createdAt');
-
-    res.json(posts);
+    res.json({
+      success: true,
+      posts: results,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        totalItems: total,
+        hasMore: skip + results.length < total,
+        itemsPerPage: parseInt(limit)
+      }
+    });
   } catch (error) {
-    console.error('Error searching posts:', error);
-    res.status(500).json({ message: 'Lỗi server', error: error.message });
+    console.error('Error searching travel posts:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi tìm kiếm bài viết du lịch',
+      error: error.message
+    });
   }
 });
 // Thêm route để lấy travel posts của một user cụ thể
