@@ -26,7 +26,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-const apiKey = 'MrYyHv2fPQi1juObplL9JxVwn1UFnjD6';  // Thay bằng API Key của bạn
+const apiKey = 'WklHCKbxxqKFIoga1Nbto2eB979gbnCf';  // Thay bằng API Key của bạn
 
 // Endpoint để nhận và xử lý file ảnh
 router.post('/scan-cccd', upload.single('image'), (req, res) => {
@@ -61,9 +61,15 @@ router.post('/scan-cccd', upload.single('image'), (req, res) => {
         // Xoá file ảnh sau khi gửi xong
         fs.unlinkSync(imagePath);
 
+        // Chuyển đổi định dạng ngày từ response
+        if (response.data.data && response.data.data[0] && response.data.data[0].dob) {
+            const originalDob = response.data.data[0].dob;
+            response.data.data[0].dob = moment(originalDob, 'DD/MM/YYYY').toDate();
+        }
+
         // Gửi kết quả từ API về cho client
         res.json(response.data);
-        console.log(response.data)
+        console.log(response.data);
     })
     .catch(error => {
         console.error('Lỗi khi gọi API:', error);
@@ -86,12 +92,15 @@ router.post('/update-cccd', auth, async (req, res) => {
         const { 
             cccd, 
             name, 
-            dob,
+            dob,  // Nhận dob từ request
             sex, 
             nationality, 
             home, 
             address, 
         } = req.body;
+
+        // Chuyển đổi dob thành Date object nếu nó là string
+        const formattedDob = typeof dob === 'string' ? moment(dob).toDate() : dob;
 
         // Lấy thông tin người dùng từ req.user (đã được set bởi middleware auth)
         const user = await User.findById(req.user.id);
@@ -103,7 +112,7 @@ router.post('/update-cccd', auth, async (req, res) => {
         // Update CCCD information
         user.cccd = cccd;
         user.name = name;
-        user.dob = dob;
+        user.dob = formattedDob;  // Sử dụng dob đã được format
         user.sex = sex;
         user.nationality = nationality;
         user.home = home;

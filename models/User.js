@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const moment = require('moment');
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -25,7 +26,7 @@ const userSchema = new mongoose.Schema({
   nationality: { type: String, default: '' },
   home: { type: String, default: '' },
   diachi: { type: String, default: '' },
-  dob: { type: String },
+  dob: { type: Date },
   chieucao: { type: Number },
   friends: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -76,19 +77,8 @@ userSchema.methods.clearResetPasswordFields = function () {
 userSchema.methods.calculateAge = function () {
   if (!this.dob) return null;
 
-  // Giả định dob có định dạng "YYYY-MM-DD"
-  const [day, month, year] = this.dob.split('-').map(Number);
-
-  const birthDate = new Date(year, month - 1, day); // month - 1 vì tháng trong JS bắt đầu từ 0
-  const today = new Date();
-
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const monthDifference = today.getMonth() - birthDate.getMonth();
-
-  if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
-  return age;
+  // Sử dụng moment để tính tuổi từ Date object
+  return moment().diff(moment(this.dob), 'years');
 };
 
 module.exports = mongoose.model('User', userSchema);
