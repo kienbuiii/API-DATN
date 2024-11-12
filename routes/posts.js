@@ -6,7 +6,8 @@ const path = require('path');
 const auth = require('../middleware/auth')
 const User = require('../models/User');
 const { upload } = require('../config/cloudinaryConfig');
-const { emitNotification } = require('../socketHandlers');
+
+const { createNotification } = require('../config/notificationHelper');
 
 // Hàm helper để lấy URL Cloudinary
 const getCloudinaryUrl = (path) => {
@@ -34,8 +35,36 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
     });
 
     const savedPost = await post.save();
+
+    // Lấy thông tin người đăng bài và danh sách followers
+    const postUser = await User.findById(req.user.id)
+      .select('username avatar followers');
+
+    // Gửi thông báo cho tất cả followers
+    if (postUser.followers && postUser.followers.length > 0) {
+      try {
+        const notificationPromises = postUser.followers.map(followerId => 
+          createNotification({
+            recipientId: followerId.toString(),
+            senderId: req.user.id,
+            type: 'new_post',
+            content: `${postUser.username} đã đăng một bài viết mới`,
+            postId: savedPost._id.toString(),
+            senderName: postUser.username,
+            senderAvatar: postUser.avatar
+          })
+        );
+
+        await Promise.all(notificationPromises);
+      } catch (notifError) {
+        console.error('Error sending post notifications:', notifError);
+        // Không throw error để vẫn tiếp tục xử lý việc tạo post
+      }
+    }
+
     res.status(201).json(savedPost);
   } catch (err) {
+    console.error('Lỗi khi tạo bài viết:', err);
     res.status(500).json({ message: 'Lỗi khi lưu bài viết!', error: err.message });
   }
 });
@@ -181,9 +210,8 @@ router.get('/all-posts', async (req, res) => {
 });
 router.post('/:postId/like', auth, async (req, res) => {
   try {
-    // Populate đầy đủ thông tin user để hiển thị trong thông báo
     const post = await Post.findById(req.params.postId)
-      .populate('user', 'username avatar');
+      .populate('user', 'username avatar fcmToken');
     
     if (!post) {
       return res.status(404).json({ message: 'Không tìm thấy bài viết' });
@@ -192,9 +220,7 @@ router.post('/:postId/like', auth, async (req, res) => {
     const userId = req.user.id;
     const likeIndex = post.likes.indexOf(userId);
     
-    // Lấy thông tin người like
     const likeUser = await User.findById(userId).select('username avatar');
-    console.log('Like user:', likeUser);
     
     if (likeIndex !== -1) {
       // Unlike
@@ -205,24 +231,26 @@ router.post('/:postId/like', auth, async (req, res) => {
       post.likes.push(userId);
       post.likesCount += 1;
 
-      // Chỉ gửi thông báo khi không phải tự like bài của mình
+      // Gửi thông báo khi like (không phải tự like)
       if (post.user._id.toString() !== userId) {
-        const notificationData = {
-          recipient: post.user._id,
-          sender: userId,
-          type: 'LIKE',
-          content: `${likeUser.username} đã thích bài viết của bạn`,
-          post: post._id,
-          actionType: 'like'
-        };
-
-        console.log('Creating notification with data:', notificationData);
-
         try {
-          const notification = await emitNotification(notificationData);
-          console.log('Notification created:', notification);
+          console.log('Sending like notification...'); // Thêm log để debug
+          
+          const notificationData = {
+            recipientId: post.user._id.toString(),
+            senderId: userId,
+            type: 'like',
+            content: `${likeUser.username} đã thích bài viết của bạn`,
+            postId: post._id.toString(), // Đảm bảo chuyển ObjectId thành string
+            senderName: likeUser.username,
+            senderAvatar: likeUser.avatar || null
+          };
+          
+          console.log('Notification data:', notificationData); // Thêm log để debug
+          
+          await createNotification(notificationData);
         } catch (notifError) {
-          console.error('Error creating notification:', notifError);
+          console.error('Error sending notification:', notifError);
         }
       }
     }
@@ -320,10 +348,12 @@ router.post('/:postId/comments', auth, async (req, res) => {
       return res.status(400).json({ message: 'Nội dung comment không được để trống' });
     }
 
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).populate('user', 'username avatar fcmToken');
     if (!post) {
       return res.status(404).json({ message: 'Không tìm thấy bài viết' });
     }
+
+    const commentUser = await User.findById(userId).select('username avatar');
 
     const newComment = {
       user: userId,
@@ -335,6 +365,23 @@ router.post('/:postId/comments', auth, async (req, res) => {
     post.commentsCount = post.comments.length;
     await post.save();
 
+    // Gửi thông báo khi comment (không phải tự comment)
+    if (post.user._id.toString() !== userId) {
+      try {
+        await createNotification({
+          recipientId: post.user._id.toString(),
+          senderId: userId,
+          type: 'comment',
+          content: `${commentUser.username} đã bình luận: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`,
+          postId: post._id,
+          senderName: commentUser.username,
+          senderAvatar: commentUser.avatar
+        });
+      } catch (notifError) {
+        console.error('Error sending notification:', notifError);
+      }
+    }
+
     // Populate thông tin user cho comment mới
     const populatedPost = await Post.findById(postId)
       .populate({
@@ -344,12 +391,11 @@ router.post('/:postId/comments', auth, async (req, res) => {
 
     const addedComment = populatedPost.comments[populatedPost.comments.length - 1];
 
-    // Tạo URL đầy đủ cho avatar
     const commentWithFullInfo = {
       ...addedComment.toObject(),
       user: addedComment.user ? {
         ...addedComment.user.toObject(),
-        avatar: addedComment.user.avatar ? `${req.protocol}://${req.get('host')}${addedComment.user.avatar}` : null
+        avatar: addedComment.user.avatar ? getCloudinaryUrl(addedComment.user.avatar) : null
       } : null
     };
 
@@ -357,6 +403,7 @@ router.post('/:postId/comments', auth, async (req, res) => {
       message: 'Comment đã được thêm thành công',
       comment: commentWithFullInfo
     });
+
   } catch (error) {
     console.error('Lỗi khi thêm comment:', error);
     res.status(500).json({ message: 'Lỗi server khi thêm comment', error: error.message });

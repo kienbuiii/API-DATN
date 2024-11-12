@@ -1,55 +1,9 @@
 const mongoose = require('mongoose');
 const Message = require('./models/Message');
-const Notification = require('./models/Notification');
 
 let io = null;
 let onlineUsers = new Map();
 let lastActiveTime = new Map();
-
-// Function để emit notification
-async function emitNotification(notificationData) {
-    try {
-        // console.log('Creating notification:', notificationData);
-        
-        // Tạo notification mới
-        const notification = new Notification(notificationData);
-        await notification.save();
-        // console.log('Notification saved:', notification);
-
-        // Populate đầy đủ thông tin cho notification
-        const populatedNotification = await Notification.findById(notification._id)
-            .populate('sender', 'username avatar')
-            .populate('post', 'title images')
-            .populate('recipient', 'username avatar');
-        
-        // console.log('Populated notification:', populatedNotification);
-
-        // Emit tới user cụ thể
-        const recipientId = notificationData.recipient.toString();
-        const recipientSocketId = onlineUsers.get(recipientId);
-        
-        console.log('Recipient socket info:', {
-            recipientId,
-            recipientSocketId,
-            onlineUsers: Array.from(onlineUsers.entries())
-        });
-
-        if (recipientSocketId) {
-            console.log('Emitting to socket:', recipientSocketId);
-            // Gửi notification qua socket
-            io.to(recipientSocketId).emit('newNotification', {
-                ...populatedNotification.toObject(),
-                createdAt: new Date(),
-                isRead: false
-            });
-        }
-
-        return populatedNotification;
-    } catch (error) {
-        console.error('Error emitting notification:', error);
-        throw error;
-    }
-}
 
 // Xử lý chat messages
 async function handleChatMessage(socket, data) {
@@ -142,22 +96,6 @@ function handleSocket(socketIo) {
             
             console.log('User connected:', userId, 'Socket ID:', socket.id);
             onlineUsers.set(userId.toString(), socket.id);
-            socket.join(`notification_${userId}`);
-            
-            // Gửi danh sách thông báo chưa đọc khi user kết nối
-            Notification.find({ 
-                recipient: userId,
-                read: false 
-            })
-            .populate('sender', 'username avatar')
-            .populate('post', 'title images')
-            .sort({ createdAt: -1 })
-            .then(notifications => {
-                socket.emit('unreadNotifications', notifications);
-            })
-            .catch(error => {
-                console.error('Error fetching unread notifications:', error);
-            });
         });
 
         // Xử lý chat
@@ -183,44 +121,6 @@ function handleSocket(socketIo) {
             }
         });
 
-        // Xử lý notifications
-        socket.on('markAsRead', async (notificationId) => {
-            try {
-                const notification = await Notification.findByIdAndUpdate(
-                    notificationId,
-                    { read: true },
-                    { new: true }
-                ).populate('sender', 'username avatar')
-                 .populate('post', 'title');
-
-                if (notification) {
-                    io.to(`notification_${notification.recipient}`).emit('notificationRead', {
-                        notificationId,
-                        notification
-                    });
-                }
-            } catch (error) {
-                console.error('Error marking notification as read:', error);
-            }
-        });
-
-        socket.on('markAllRead', async (userId) => {
-            try {
-                const notifications = await Notification.updateMany(
-                    { recipient: userId, read: false },
-                    { read: true }
-                );
-
-                const updatedNotifications = await Notification.find({ recipient: userId })
-                    .populate('sender', 'username avatar')
-                    .populate('post', 'title');
-
-                io.to(`notification_${userId}`).emit('allNotificationsRead', updatedNotifications);
-            } catch (error) {
-                console.error('Error marking all notifications as read:', error);
-            }
-        });
-
         // Xử lý disconnect
         socket.on('disconnect', () => {
             const userId = Array.from(onlineUsers.entries())
@@ -238,7 +138,6 @@ function handleSocket(socketIo) {
 
 module.exports = {
     handleSocket,
-    emitNotification,
     onlineUsers,
     lastActiveTime
 };

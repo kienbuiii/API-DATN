@@ -5,6 +5,7 @@ const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { upload } = require('../config/cloudinaryConfig');
 const mongoose = require('mongoose'); // 
+const { createNotification } = require('../config/notificationHelper');
 
 // Create a travel post
 router.post('/create', auth, upload.array('image', 5), async (req, res) => {
@@ -286,7 +287,9 @@ router.get('/:postId', auth, async (req, res) => {
 
 router.post('/:postId/toggle-like', auth, async (req, res) => {
   try {
-    const post = await TravelPost.findById(req.params.postId);
+    const post = await TravelPost.findById(req.params.postId)
+      .populate('author', 'username avatar fcmToken');
+    
     if (!post) {
       return res.status(404).json({ 
         success: false,
@@ -294,16 +297,41 @@ router.post('/:postId/toggle-like', auth, async (req, res) => {
       });
     }
 
-    // Chuyển ObjectId thành string để so sánh
-    const userId = req.user.id.toString();
+    const userId = req.user.id;
     const likeIndex = post.likes.findIndex(id => id.toString() === userId);
-
+    
+    // Lấy thông tin người like
+    const likeUser = await User.findById(userId).select('username avatar');
+    
     if (likeIndex > -1) {
       // Unlike - remove user from likes array
       post.likes.splice(likeIndex, 1);
     } else {
       // Like - add user to likes array
       post.likes.push(userId);
+
+      // Gửi thông báo khi like (không phải tự like)
+      if (post.author._id.toString() !== userId) {
+        try {
+          console.log('Sending like notification for travel post...'); 
+          
+          const notificationData = {
+            recipientId: post.author._id.toString(),
+            senderId: userId,
+            type: 'like',
+            content: `${likeUser.username} đã thích bài viết du lịch của bạn`,
+            postId: post._id.toString(),
+            senderName: likeUser.username,
+            senderAvatar: likeUser.avatar || null
+          };
+          
+          console.log('Travel post notification data:', notificationData);
+          
+          await createNotification(notificationData);
+        } catch (notifError) {
+          console.error('Error sending travel post notification:', notifError);
+        }
+      }
     }
 
     await post.save();
@@ -311,12 +339,12 @@ router.post('/:postId/toggle-like', auth, async (req, res) => {
     return res.json({
       success: true,
       likesCount: post.likes.length,
-      isLiked: likeIndex === -1, // true if just liked, false if just unliked
+      isLiked: likeIndex === -1,
       message: likeIndex === -1 ? 'Đã thích bài viết' : 'Đã bỏ thích bài viết'
     });
 
   } catch (error) {
-    console.error('Error toggling like:', error);
+    console.error('Error toggling like for travel post:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Lỗi server',

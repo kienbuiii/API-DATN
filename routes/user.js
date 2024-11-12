@@ -8,6 +8,8 @@ const Post = require('../models/Post');
 const { cloudinary, upload } = require('../config/cloudinaryConfig');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const Notification = require('../models/Notification');
+const { createNotification } = require('../config/notificationHelper');
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -332,8 +334,10 @@ router.get('/profile/:userId', auth, async (req, res) => {
 
 router.post('/follow/:userId', auth, async (req, res) => {
   try {
-    const userToFollow = await User.findById(req.params.userId);
-    const currentUser = await User.findById(req.user.id);
+    const userToFollow = await User.findById(req.params.userId)
+      .select('username avatar followers followersCount');
+    const currentUser = await User.findById(req.user.id)
+      .select('username avatar following followingCount');
 
     if (!userToFollow || !currentUser) {
       return res.status(404).json({ message: 'Không tìm thấy người dùng' });
@@ -343,14 +347,32 @@ router.post('/follow/:userId', auth, async (req, res) => {
       return res.status(400).json({ message: 'Bạn đã theo dõi người dùng này rồi' });
     }
 
+    // Thêm vào danh sách following/followers
     currentUser.following.push(userToFollow._id);
     currentUser.followingCount += 1;
 
     userToFollow.followers.push(currentUser._id);
     userToFollow.followersCount += 1;
 
-    await currentUser.save();
-    await userToFollow.save();
+    // Tạo thông báo cho người được follow
+    try {
+      await createNotification({
+        recipientId: userToFollow._id.toString(),
+        senderId: currentUser._id.toString(),
+        type: 'follow',
+        content: `${currentUser.username} đã bắt đầu theo dõi bạn`,
+        senderName: currentUser.username,
+        senderAvatar: currentUser.avatar
+      });
+    } catch (notifError) {
+      console.error('Error creating follow notification:', notifError);
+      // Không throw error ở đây để vẫn tiếp tục xử lý follow
+    }
+
+    await Promise.all([
+      currentUser.save(),
+      userToFollow.save()
+    ]);
 
     res.json({ 
       message: 'Đã theo dõi thành công',
@@ -716,29 +738,21 @@ router.get('/travel-posts/:userId', auth, async (req, res) => {
   }
 });
 
-router.get('/all-users', async (req, res) => {
-  try {
-    const users = await User.find()
-      .select('username avatar email bio followersCount followingCount xacMinhDanhTinh role')
-      .sort({ createdAt: -1 });
+// Cập nhật FCM token
+router.post('/update-fcm-token', auth, async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        
+        if (!fcmToken) {
+            return res.status(400).json({ message: 'FCM token is required' });
+        }
 
-    const usersData = users.map(user => ({
-      id: user._id,
-      username: user.username,
-      avatar: user.avatar,
-      email: user.email,
-      bio: user.bio,
-      role: user.role,
-      followersCount: user.followersCount,
-      followingCount: user.followingCount,
-      xacMinhDanhTinh: user.xacMinhDanhTinh
-    }));
-
-    res.json(usersData);
-  } catch (error) {
-    console.error('Lỗi khi lấy danh sách người dùng:', error);
-    res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
-  }
+        await User.findByIdAndUpdate(req.user.id, { fcmToken });
+        
+        res.json({ message: 'FCM token updated successfully' });
+    } catch (error) {
+        console.error('Update FCM token error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
 });
-
 module.exports = router;
