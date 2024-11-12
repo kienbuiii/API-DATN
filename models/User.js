@@ -41,8 +41,14 @@ const userSchema = new mongoose.Schema({
     timestamp: { type: Date, default: Date.now }
   }],
   resetPasswordOtp: String,
-  resetPasswordExpires: Date
+  resetPasswordExpires: Date,
+  role: {
+    type: String,
+    enum: ['user', 'admin'], // các role có thể có
+    default: 'user' // mặc định là user khi đăng ký
+  },
 }, 
+
 {
   timestamps: true
 });
