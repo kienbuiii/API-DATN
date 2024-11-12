@@ -11,6 +11,7 @@ const scanRoutes = require('./routes/scan');
 const travelPostRoutes = require('./routes/TravelPost');
 const notificationRoutes = require('./routes/notification');
 const chatRoutes = require('./routes/chatRouter');
+const adminRouter = require('./routes/admin');
 const { handleSocket } = require('./socketHandlers');
 
 const app = express();
@@ -46,6 +47,7 @@ app.use('/api/posts', postRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/travel-posts', travelPostRoutes);
 app.use('/api/soThich', soThich);
+app.use('/api/admin', adminRouter);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 

@@ -78,90 +78,95 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 router.post('/register', async (req, res) => {
-    const { email, password, username } = req.body;
+  try {
+    const { username, email, password } = req.body;
 
-    try {
-        // Kiểm tra xem email đã tồn tại chưa
-        let user = await User.findOne({ email });
-        if (user) {
-            return res.status(400).json({ message: 'Email đã tồn tại' });
-        }
-
-        // Tạo người dùng mới chỉ với email và mật khẩu, các trường khác dùng giá trị mặc định
-        user = new User({
-            email,
-            password,  // Mật khẩu sẽ được mã hóa tự động nhờ pre-save middleware
-            name: '',
-            username,
-            avatar: '',
-            bio: '',
-            sdt: '',
-            cccd: '',
-            ngaysinh: '',
-            gioitinh: '',
-            thanhpho: '',
-            tinhtranghonnhan:'',
-        });
-
-        // Lưu người dùng mới
-        await user.save();
-
-        // Tạo JWT token
-        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-        // Trả về token và thông tin người dùng
-        res.status(201).json({ token, user });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Lỗi máy chủ' });
+    // Kiểm tra email đã tồn tại
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email đã được sử dụng' });
     }
+
+    // Mã hóa mật khẩu
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Tạo user mới với role mặc định là 'user'
+    const user = new User({
+      username,
+      email,
+      password: hashedPassword,
+      role: 'user', // mặc định là user
+      avatar: 'https://res.cloudinary.com/dqwxfqpxl/image/upload/v1700143744/default-avatar_xqg1rp.jpg',
+      followersCount: 0,
+      followingCount: 0,
+      xacMinhDanhTinh: false
+    });
+
+    await user.save();
+
+    // Tạo token
+    const token = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      message: 'Đăng ký thành công',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        followersCount: user.followersCount,
+        followingCount: user.followingCount,
+        xacMinhDanhTinh: user.xacMinhDanhTinh
+      }
+    });
+  } catch (error) {
+    console.error('Lỗi khi đăng ký:', error);
+    res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
+  }
 });
 
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log('Login attempt for email:', email);
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email và mật khẩu là bắt buộc' });
-    }
-
     const user = await User.findOne({ email });
+
     if (!user) {
-      console.log('User not found for email:', email);
-      return res.status(400).json({ message: 'Email hoặc mật khẩu không đúng' });
+      return res.status(401).json({ message: 'Email hoặc mật khẩu không đúng' });
     }
 
-    console.log('Stored hashed password:', user.password);
-    console.log('Entered password:', password);
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      console.log('Password mismatch for user:', email);
-      return res.status(400).json({ message: 'Email hoặc mật khẩu không đúng' });
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ message: 'Email hoặc mật khẩu không đúng' });
     }
 
     const token = jwt.sign(
-      { id: user._id },
+      { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
-    console.log('Login successful for user:', email);
-
     res.json({
+      message: 'Đăng nhập thành công',
       token,
       user: {
         id: user._id,
-        email: user.email,
         username: user.username,
+        email: user.email,
+        role: user.role,
         avatar: user.avatar,
-        sdt: user.sdt,
+        followersCount: user.followersCount,
+        followingCount: user.followingCount,
         xacMinhDanhTinh: user.xacMinhDanhTinh
       }
     });
   } catch (error) {
-    console.error('Lỗi đăng nhập:', error);
+    console.error('Lỗi khi đăng nhập:', error);
     res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
   }
 });
@@ -710,4 +715,30 @@ router.get('/travel-posts/:userId', auth, async (req, res) => {
     res.status(500).json({ message: 'Lỗi server' });
   }
 });
+
+router.get('/all-users', async (req, res) => {
+  try {
+    const users = await User.find()
+      .select('username avatar email bio followersCount followingCount xacMinhDanhTinh role')
+      .sort({ createdAt: -1 });
+
+    const usersData = users.map(user => ({
+      id: user._id,
+      username: user.username,
+      avatar: user.avatar,
+      email: user.email,
+      bio: user.bio,
+      role: user.role,
+      followersCount: user.followersCount,
+      followingCount: user.followingCount,
+      xacMinhDanhTinh: user.xacMinhDanhTinh
+    }));
+
+    res.json(usersData);
+  } catch (error) {
+    console.error('Lỗi khi lấy danh sách người dùng:', error);
+    res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
+  }
+});
+
 module.exports = router;
