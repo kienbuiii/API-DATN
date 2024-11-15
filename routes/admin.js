@@ -1,19 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Post = require('../models/Post'); // Thêm import Post model
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // Middleware kiểm tra role admin
+// Trong middleware checkAdminRole
 const checkAdminRole = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
+    console.log('Received token:', token);
+
     if (!token) {
-      return res.status(401).json({ message: 'Không có quyền truy cập' });
+      return res.status(401).json({ message: 'Không có token' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log('Decoded token:', decoded);
+
     const user = await User.findById(decoded.id);
+    console.log('Found user:', user);
 
     if (!user || user.role !== 'admin') {
       return res.status(403).json({ message: 'Không có quyền admin' });
@@ -22,13 +29,12 @@ const checkAdminRole = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
     res.status(401).json({ message: 'Token không hợp lệ' });
   }
 };
-
-
 // Thêm route mới cho dashboard stats
-router.get('/dashboard/stats', checkAdminRole, async (req, res) => {
+router.post('/dashboard/stats', checkAdminRole, async (req, res) => {
   try {
     // Lấy các thống kê từ database
     const totalUsers = await User.countDocuments();
@@ -66,66 +72,22 @@ router.get('/dashboard/stats', checkAdminRole, async (req, res) => {
 });
 
 
-router.get('/users', checkAdminRole, async (req, res) => {
+router.post('/users', checkAdminRole, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const search = req.query.search || '';
-
-    // Debug log
-    console.log('Query params:', { page, limit, search });
-
-    // Tạo query tìm kiếm
-    const searchQuery = {};
-    if (search) {
-      searchQuery.$or = [
-        { username: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { name: { $regex: search, $options: 'i' } },
-        { sdt: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    // Debug log
-    console.log('Search query:', searchQuery);
-
-    // Đếm tổng số users thỏa mãn điều kiện
-    const total = await User.countDocuments(searchQuery);
+    // Thêm Cache-Control cho route này
+    res.setHeader('Cache-Control', 'no-store'); // Hoặc 'public, max-age=3600'
     
-    // Debug log
-    console.log('Total users:', total);
-
-    // Lấy danh sách users có phân trang
-    const users = await User.find(searchQuery)
-      .select('-password') // Loại bỏ trường password
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .sort({ createdAt: -1 }); // Sắp xếp theo thời gian tạo mới nhất
-
-    // Debug log
-    console.log('Found users:', users.length);
-
-    // Luôn trả về một response object, ngay cả khi không có users
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
     res.status(200).json({
       success: true,
-      message: users.length ? 'Lấy danh sách người dùng thành công' : 'Không có người dùng',
-      data: {
-        users: users || [],
-        pagination: {
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit)
-        }
-      }
+      data: users,
+      message: users.length ? 'Lấy danh sách thành công' : 'Không có người dùng'
     });
-
   } catch (error) {
-    console.error('Lỗi lấy danh sách users:', error);
-    res.status(500).json({ 
+    console.error('Lỗi:', error);
+    res.status(500).json({
       success: false,
-      message: 'Lỗi server khi lấy danh sách người dùng',
-      error: error.message 
+      message: 'Lỗi server'
     });
   }
 });
@@ -133,8 +95,6 @@ router.get('/users', checkAdminRole, async (req, res) => {
 // API đăng nhập cho admin
 router.post('/login', async (req, res) => {
   try {
-    console.log('Login request body:', req.body); // Debug log
-
     const { email, password } = req.body;
 
     // Validate input
@@ -195,6 +155,122 @@ router.post('/login', async (req, res) => {
     });
   }
 });
+
+// Thêm route để xem chi tiết user
+router.post('/users/:userId', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Tìm user và populate các trường liên quan
+    const user = await User.findById(userId)
+      .select('-password') // Loại bỏ password
+      .populate({
+        path: 'Post',
+        select: 'content images createdAt likes comments', // Chọn các trường cần thiết của Post
+        options: { sort: { createdAt: -1 } } // Sắp xếp theo thời gian tạo mới nhất
+      })
+      .populate('followers', 'username avatar') // Populate followers
+      .populate('following', 'username avatar') // Populate following
+      .populate('friends', 'username avatar'); // Populate friends
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    // Tính toán thêm một số thống kê
+    const userStats = {
+      totalPosts: user.Post.length,
+      totalFollowers: user.followers.length,
+      totalFollowing: user.following.length,
+      totalFriends: user.friends.length,
+      accountAge: Math.floor((new Date() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24)) // Số ngày từ khi tạo tài khoản
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...user.toObject(),
+        stats: userStats
+      },
+      message: 'Lấy thông tin người dùng thành công'
+    });
+
+  } catch (error) {
+    console.error('Chi tiết user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server',
+      error: error.message
+    });
+  }
+});
+
+router.post('/users/:userId/posts', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 10 } = req.body;
+
+    // Kiểm tra user có tồn tại không
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    // Lấy posts của user với error handling
+    const posts = await Post.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('user', 'username avatar')
+      .lean() // Chuyển sang plain object để tối ưu performance
+      .catch(err => {
+        console.error('Error fetching posts:', err);
+        return [];
+      });
+
+    // Đếm tổng số posts
+    const total = await Post.countDocuments({ user: userId })
+      .catch(err => {
+        console.error('Error counting posts:', err);
+        return 0;
+      });
+
+    // Trả về response với đầy đủ thông tin
+    res.status(200).json({
+      success: true,
+      data: {
+        posts,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalPosts: total,
+          limit: parseInt(limit)
+        },
+        user: {
+          _id: user._id,
+          username: user.username,
+          avatar: user.avatar
+        }
+      },
+      message: posts.length ? 'Lấy danh sách bài viết thành công' : 'Người dùng chưa có bài viết'
+    });
+
+  } catch (error) {
+    console.error('User posts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy bài viết',
+      error: error.message
+    });
+  }
+});
+
 // API cập nhật trạng thái người dùng
 router.patch('/users/:userId/status', checkAdminRole, async (req, res) => {
   try {
@@ -231,6 +307,36 @@ router.delete('/users/:userId', checkAdminRole, async (req, res) => {
     res.json({ message: 'Xóa người dùng thành công' });
   } catch (error) {
     console.error('Lỗi xóa người dùng:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+// routes/admin.js
+
+// API thống kê chi tiết
+router.post('/stats/detailed', checkAdminRole, async (req, res) => {
+  try {
+    const timeRange = req.query.range || '7d'; // 7d, 30d, 90d
+    
+    const stats = await generateDetailedStats(timeRange);
+    res.json(stats);
+    
+  } catch (error) {
+    console.error('Detailed stats error:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+// API quản lý báo cáo
+router.post('/reports', checkAdminRole, async (req, res) => {
+  try {
+    const reports = await Report.find()
+      .populate('reporter', 'username email')
+      .populate('reportedUser', 'username email')
+      .sort({ createdAt: -1 });
+      
+    res.json(reports);
+  } catch (error) {
+    console.error('Reports error:', error);
     res.status(500).json({ message: 'Lỗi server' });
   }
 });
