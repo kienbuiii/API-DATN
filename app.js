@@ -26,7 +26,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Cấu hình Socket.IO với CORS (chỉ cho chat)
+app.use(cors({
+  origin: ['http://localhost:3001', 'https://lobster-upward-sunbeam.ngrok-free.app'],
+  credentials: true
+}));
+
+// Cấu hình Socket.IO với CORS
 const io = socketIo(server, {
   cors: {
     origin: "*",
