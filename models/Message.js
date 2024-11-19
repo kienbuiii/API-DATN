@@ -15,17 +15,24 @@ const messageSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    type: {
+        type: String,
+        enum: ['text', 'image', 'file'],
+        default: 'text'
+    },
     status: {
         type: String,
         enum: ['sent', 'delivered', 'read'],
         default: 'sent'
     },
-    deletedFor: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    }]
-}, {
-    timestamps: true
+    read: {
+        type: Boolean,
+        default: false
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
 });
 
 module.exports = mongoose.model('Message', messageSchema);

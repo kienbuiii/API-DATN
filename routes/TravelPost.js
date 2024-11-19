@@ -66,9 +66,21 @@ router.post('/create', auth, upload.array('image', 5), async (req, res) => {
 });
 
 // Get all travel posts
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
-    const posts = await TravelPost.find()
+    // Get current user to check blocked list
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get blocked user IDs
+    const blockedUserIds = currentUser.blocked.map(block => block.user.toString());
+
+    // Find posts excluding blocked users
+    const posts = await TravelPost.find({
+      author: { $nin: blockedUserIds } // Exclude posts from blocked users
+    })
       .populate('author', 'name username avatar dob')
       .sort('-createdAt');
 
@@ -76,7 +88,9 @@ router.get('/', async (req, res) => {
       ...post._doc,
       author: {
         ...post.author._doc,
-        age: post.author.dob && typeof post.author.dob.getTime === 'function' ? calculateAge(post.author.dob) : null
+        age: post.author.dob && typeof post.author.dob.getTime === 'function' 
+          ? calculateAge(post.author.dob) 
+          : null
       }
     }));
 
@@ -85,6 +99,7 @@ router.get('/', async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+
 
 // Get travel posts for map view
 router.get('/map-posts', auth, async (req, res) => {
