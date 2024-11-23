@@ -10,6 +10,7 @@ const admin = require('./config/firebase'); // Thêm import Firebase Admin
 // Import routes
 const userRoutes = require('./routes/user');
 const postRoutes = require('./routes/posts');
+const adminRouter = require('./routes/admin');
 const scanRoutes = require('./routes/scan');
 const travelPostRoutes = require('./routes/TravelPost');
 const notificationRoutes = require('./routes/notification');
@@ -57,6 +58,7 @@ app.use('/api/travel-posts', travelPostRoutes);
 app.use('/api/soThich', soThich);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin', adminRouter);
 
 // Health check route
 app.get('/health', (req, res) => {

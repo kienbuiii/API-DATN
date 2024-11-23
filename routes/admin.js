@@ -34,42 +34,6 @@ const checkAdminRole = async (req, res, next) => {
   }
 };
 // Thêm route mới cho dashboard stats
-router.post('/dashboard/stats', checkAdminRole, async (req, res) => {
-  try {
-    // Lấy các thống kê từ database
-    const totalUsers = await User.countDocuments();
-    const newPosts = await Post.countDocuments({ 
-      createdAt: { 
-        $gte: new Date(Date.now() - 24*60*60*1000) 
-      }
-    });
-    const newMessages = await Message.countDocuments({
-      createdAt: { 
-        $gte: new Date(Date.now() - 24*60*60*1000)
-      }
-    });
-    
-    // Tính toán tỷ lệ tăng trưởng (có thể tùy chỉnh logic)
-    const userGrowth = 15; // Ví dụ: tăng 15%
-    const postGrowth = 25;
-    const messageGrowth = 10;
-    const visitGrowth = 30;
-
-    res.json({
-      totalUsers,
-      newPosts,
-      newMessages,
-      totalVisits: 15000, // Ví dụ, có thể lấy từ analytics
-      userGrowth,
-      postGrowth,
-      messageGrowth,
-      visitGrowth
-    });
-  } catch (error) {
-    console.error('Dashboard stats error:', error);
-    res.status(500).json({ message: 'Lỗi server' });
-  }
-});
 
 
 router.post('/users', checkAdminRole, async (req, res) => {
@@ -156,22 +120,127 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Thêm route để xem chi tiết user
-router.post('/users/:userId', checkAdminRole, async (req, res) => {
+
+router.post('/users/search', checkAdminRole, async (req, res) => {
+  try {
+    const {
+      keyword = '',
+      status,
+      role,
+      dateRange,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      order = 'desc'
+    } = req.body;
+
+    // Xây dựng query tìm kiếm
+    const searchQuery = {};
+    
+    // Thêm điều kiện tìm kiếm theo keyword
+    if (keyword) {
+      searchQuery.$or = [
+        { username: { $regex: keyword, $options: 'i' } },
+        { email: { $regex: keyword, $options: 'i' } }
+      ];
+    }
+
+    // Thêm điều kiện tìm kiếm theo status nếu có
+    if (status) {
+      searchQuery.status = status;
+    }
+
+    // Thêm điều kiện tìm kiếm theo role nếu có
+    if (role) {
+      searchQuery.role = role;
+    }
+
+    // Thêm điều kiện tìm kiếm theo khoảng thời gian nếu có
+    if (dateRange) {
+      const { startDate, endDate } = dateRange;
+      if (startDate && endDate) {
+        searchQuery.createdAt = {
+          $gte: new Date(startDate),
+          $lte: new Date(endDate)
+        };
+      }
+    }
+
+    // Tính toán skip cho phân trang
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Xây dựng sort options
+    const sortOptions = {};
+    sortOptions[sortBy] = order === 'asc' ? 1 : -1;
+
+    // Thực hiện tìm kiếm với phân trang
+    const users = await User.find(searchQuery)
+      .select('-password')
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    // Đếm tổng số kết quả
+    const total = await User.countDocuments(searchQuery);
+
+    // Thêm thông tin thống kê cho mỗi user
+    const enhancedUsers = await Promise.all(users.map(async (user) => {
+      const postsCount = await Post.countDocuments({ user: user._id });
+      const followersCount = user.followers ? user.followers.length : 0;
+      const followingCount = user.following ? user.following.length : 0;
+      const accountAge = Math.floor((new Date() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
+
+      return {
+        ...user,
+        stats: {
+          postsCount,
+          followersCount,
+          followingCount,
+          accountAge // số ngày từ khi tạo tài khoản
+        }
+      };
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: enhancedUsers,
+        pagination: {
+          total,
+          page: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          limit: parseInt(limit)
+        }
+      },
+      message: enhancedUsers.length ? 'Tìm kiếm thành công' : 'Không tìm thấy kết quả'
+    });
+
+  } catch (error) {
+    console.error('Lỗi tìm kiếm người dùng:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi tìm kiếm người dùng',
+      error: error.message
+    });
+  }
+});
+
+// Route chi tiết user (đặt SAU route search)
+router.post('/users/detail/:userId', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Tìm user và populate các trường liên quan
     const user = await User.findById(userId)
-      .select('-password') // Loại bỏ password
+      .select('-password')
       .populate({
         path: 'Post',
-        select: 'content images createdAt likes comments', // Chọn các trường cần thiết của Post
-        options: { sort: { createdAt: -1 } } // Sắp xếp theo thời gian tạo mới nhất
+        select: 'content images createdAt likes comments',
+        options: { sort: { createdAt: -1 } }
       })
-      .populate('followers', 'username avatar') // Populate followers
-      .populate('following', 'username avatar') // Populate following
-      .populate('friends', 'username avatar'); // Populate friends
+      .populate('followers', 'username avatar')
+      .populate('following', 'username avatar')
+      .populate('friends', 'username avatar');
 
     if (!user) {
       return res.status(404).json({
@@ -340,4 +409,149 @@ router.post('/reports', checkAdminRole, async (req, res) => {
     res.status(500).json({ message: 'Lỗi server' });
   }
 });
+
+// API thống kê tổng quan
+router.post('/dashboard-stats', checkAdminRole, async (req, res) => {
+  try {
+    // Lấy tổng số người dùng (không tính admin)
+    const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
+    
+    // Lấy tổng số bài viết
+    const totalPosts = await Post.countDocuments();
+    
+    // Lấy số người dùng mới trong 7 ngày qua
+    const lastWeek = new Date();
+    lastWeek.setDate(lastWeek.getDate() - 7);
+    const newUsers = await User.countDocuments({
+      createdAt: { $gte: lastWeek },
+      role: { $ne: 'admin' }
+    });
+
+    // Lấy số bài viết mới trong 7 ngày qua
+    const newPosts = await Post.countDocuments({
+      createdAt: { $gte: lastWeek }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalUsers,
+        totalPosts,
+        newUsers,
+        newPosts,
+        lastUpdated: new Date()
+      },
+      message: 'Lấy thống kê thành công'
+    });
+
+  } catch (error) {
+    console.error('Dashboard stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy thống kê',
+      error: error.message
+    });
+  }
+});
+// vô hiệu hóa tài khoản
+router.post('/users/:userId/disable', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { vohieuhoa } = req.body; // Truyền giá trị từ body nếu có, nếu không, mặc định là true
+
+    // Nếu không có giá trị vohieuhoa trong body, set nó mặc định là true
+    const disableStatus = vohieuhoa !== undefined ? vohieuhoa : true;
+
+    // Cập nhật trạng thái vô hiệu hóa
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { vohieuhoa: disableStatus },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Không tìm thấy người dùng' 
+      });
+    }
+
+    const message = disableStatus 
+      ? 'Tài khoản đã bị vô hiệu hóa' 
+      : 'Tài khoản đã được kích hoạt';
+
+    res.status(200).json({
+      success: true,
+      data: user,
+      message
+    });
+  } catch (error) {
+    console.error('Error disabling account:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi vô hiệu hóa tài khoản',
+      error: error.message
+    });
+  }
+});
+
+
+router.post('/users/:userId/enable', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Tìm người dùng theo userId
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Kiểm tra nếu tài khoản đã bị vô hiệu hóa
+    if (!user.vohieuhoa) {
+      return res.status(400).json({ message: 'Tài khoản này không bị vô hiệu hóa' });
+    }
+
+    // Cập nhật trạng thái tài khoản thành 'active' (kích hoạt lại)
+    user.vohieuhoa = false;
+    await user.save();
+
+    res.status(200).json({
+      message: 'Tài khoản đã được kích hoạt lại thành công',
+      user
+    });
+  } catch (error) {
+    console.error('Lỗi kích hoạt lại tài khoản:', error);
+    res.status(500).json({ message: 'Lỗi server khi kích hoạt lại tài khoản' });
+  }
+});
+// API xóa người dùng khỏi database
+router.delete('/users/:userId', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Tìm và kiểm tra người dùng trong cơ sở dữ liệu
+    const user = await User.findById(userId);
+
+    // Kiểm tra nếu người dùng không tồn tại
+    if (!user) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Kiểm tra xem người dùng có phải là admin hay không
+    if (user.role === 'admin') {
+      return res.status(400).json({ message: 'Không thể xóa tài khoản admin' });
+    }
+
+    // Xóa người dùng
+    await User.findByIdAndDelete(userId);
+
+    res.json({ message: 'Xóa người dùng thành công' });
+  } catch (error) {
+    console.error('Lỗi xóa người dùng:', error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+
 module.exports = router;

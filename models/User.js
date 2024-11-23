@@ -47,6 +47,10 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'], // các role có thể có
     default: 'user' // mặc định là user khi đăng ký
   },
+  vohieuhoa: {
+    type: Boolean,
+    default: false
+  }
 }, 
 
 {
