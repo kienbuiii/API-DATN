@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Post = require('../models/Post'); // Thêm import Post model
+const TravelPost = require('../models/TravelPost'); // Thêm import TravelPost model
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-
+const Message = require('../models/Message'); // Thêm import Message model
+const mongoose = require('mongoose');
 // Middleware kiểm tra role admin
 // Trong middleware checkAdminRole
 const checkAdminRole = async (req, res, next) => {
@@ -363,22 +365,80 @@ router.patch('/users/:userId/status', checkAdminRole, async (req, res) => {
   }
 });
 
-// API xóa người dùng
+// API xóa người dùng và tất cả dữ liệu liên quan
 router.delete('/users/:userId', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findByIdAndDelete(userId);
 
+    // Tìm người dùng cần xóa
+    const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ message: 'Không tìm thấy người dùng' });
     }
 
-    res.json({ message: 'Xóa người dùng thành công' });
+    // 1. Cập nhật followersCount và followingCount cho người theo dõi và người được theo dõi
+    await User.updateMany(
+      { _id: { $in: user.followers } },
+      { $pull: { following: userId }, $inc: { followingCount: -1 } }
+    );
+
+    await User.updateMany(
+      { _id: { $in: user.following } },
+      { $pull: { followers: userId }, $inc: { followersCount: -1 } }
+    );
+
+    // 2. Lấy tất cả các bài viết mà người dùng đã like
+    const userPosts = await Post.find({});
+
+    // 3. Xóa tất cả các bình luận của người dùng trên các bài viết
+    await Post.updateMany(
+      {},
+      { $pull: { comments: { user: userId } } } // Xóa tất cả bình luận của người dùng
+    );
+
+    // 4. Cập nhật commentsCount cho các bài viết
+    await Post.updateMany(
+      {},
+      { $inc: { commentsCount: -1 } } // Giảm commentsCount cho mỗi bài viết
+    );
+
+    // 5. Xóa tất cả các like của người dùng trên các bài viết
+    await Post.updateMany(
+      {},
+      { $pull: { likes: userId } } // Xóa tất cả like của người dùng
+    );
+
+    // 6. Cập nhật likesCount cho các bài viết
+    await Post.updateMany(
+      {},
+      { $inc: { likesCount: -1 } } // Giảm likesCount cho mỗi bài viết
+    );
+
+    // 7. Xóa tất cả các bài viết của người dùng
+    await Post.deleteMany({ user: userId });
+
+    // 8. Lấy tất cả các bài đăng du lịch của người dùng
+    const userTravelPosts = await TravelPost.find({ author: userId });
+
+    // 9. Xóa tất cả các like từ các bài đăng du lịch của người dùng
+    await TravelPost.updateMany(
+      {},
+      { $pull: { likes: userId } } // Xóa tất cả like của người dùng
+    );
+
+    // 10. Xóa tất cả các bài đăng du lịch của người dùng
+    await TravelPost.deleteMany({ author: userId });
+
+    // 11. Xóa người dùng
+    await User.findByIdAndDelete(userId);
+
+    res.json({ message: 'Xóa người dùng và các dữ liệu liên quan thành công' });
   } catch (error) {
-    console.error('Lỗi xóa người dùng:', error);
-    res.status(500).json({ message: 'Lỗi server' });
+    console.error('Lỗi khi xóa người dùng:', error);
+    res.status(500).json({ message: 'Lỗi khi xóa người dùng và dữ liệu liên quan' });
   }
 });
+
 // routes/admin.js
 
 // API thống kê chi tiết
@@ -525,33 +585,85 @@ router.post('/users/:userId/enable', checkAdminRole, async (req, res) => {
     res.status(500).json({ message: 'Lỗi server khi kích hoạt lại tài khoản' });
   }
 });
-// API xóa người dùng khỏi database
-router.delete('/users/:userId', checkAdminRole, async (req, res) => {
+
+// Route gửi tin nhắn
+router.post('/messages', checkAdminRole, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { receiverId, text, type } = req.body;
 
-    // Tìm và kiểm tra người dùng trong cơ sở dữ liệu
-    const user = await User.findById(userId);
-
-    // Kiểm tra nếu người dùng không tồn tại
-    if (!user) {
-      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    // Kiểm tra thông tin đầu vào
+    if (!receiverId || !text) {
+      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin' });
     }
 
-    // Kiểm tra xem người dùng có phải là admin hay không
-    if (user.role === 'admin') {
-      return res.status(400).json({ message: 'Không thể xóa tài khoản admin' });
+    // Tạo tin nhắn mới
+    const message = new Message({
+      senderId: req.user.id, // ID của admin
+      receiverId,
+      text,
+      type: type || 'text' // Nếu không có type, mặc định là 'text'
+    });
+
+    await message.save();
+
+    // Emit sự kiện cho người nhận
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${receiverId}`).emit('newMessage', message);
     }
 
-    // Xóa người dùng
-    await User.findByIdAndDelete(userId);
-
-    res.json({ message: 'Xóa người dùng thành công' });
+    res.status(201).json({ message: 'Tin nhắn đã được gửi thành công', data: message });
   } catch (error) {
-    console.error('Lỗi xóa người dùng:', error);
-    res.status(500).json({ message: 'Lỗi server' });
+    console.error('Lỗi gửi tin nhắn:', error);
+    res.status(500).json({ message: 'Lỗi server khi gửi tin nhắn', error: error.message });
   }
 });
 
+// Route lấy tất cả người dùng
+router.post('/users/all', checkAdminRole, async (req, res) => {
+  try {
+      const users = await User.find().select('-password').sort({ createdAt: -1 });
+      res.status(200).json({
+          success: true,
+          data: users,
+          message: users.length ? 'Lấy danh sách người dùng thành công' : 'Không có người dùng'
+      });
+  } catch (error) {
+      console.error('Lỗi lấy người dùng:', error);
+      res.status(500).json({
+          success: false,
+          message: 'Lỗi server khi lấy người dùng',
+          error: error.message
+      });
+  }
+});
+
+// Route lấy lịch sử trò chuyện với người dùng
+router.post('/chat-history/:userId', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Kiểm tra xem userId có phải là ObjectId hợp lệ không
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: 'ID người dùng không hợp lệ' });
+    }
+
+    // Lấy tất cả tin nhắn giữa admin và người dùng
+    const chatHistory = await Message.find({
+      $or: [
+        { senderId: req.user.id, receiverId: userId },
+        { senderId: userId, receiverId: req.user.id }
+      ]
+    })
+    .populate('senderId', 'username avatar')
+    .populate('receiverId', 'username avatar')
+    .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, data: chatHistory });
+  } catch (error) {
+    console.error('Lỗi lấy lịch sử trò chuyện:', error);
+    res.status(500).json({ message: 'Lỗi server khi lấy lịch sử trò chuyện', error: error.message });
+  }
+});
 
 module.exports = router;

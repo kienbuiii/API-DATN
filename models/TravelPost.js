@@ -70,5 +70,10 @@ TravelPostSchema.index({ destination: '2dsphere' });
 TravelPostSchema.index({ title: 'text', destinationName: 'text' });
 // Thêm index cho likes để tối ưu performance
 TravelPostSchema.index({ likes: 1 });
+// Hook để xóa các bài đăng du lịch khi người dùng bị xóa
+TravelPostSchema.pre('remove', async function(next) {
+  await TravelPost.deleteMany({ author: this._id });
+  next();
+});
 
 module.exports = mongoose.model('TravelPost', TravelPostSchema);
