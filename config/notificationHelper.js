@@ -6,14 +6,13 @@ const getNotificationsRef = (userId) => db.ref(`notifications/${userId}`);
 
 const createNotification = async (data) => {
     try {
-        console.log('Creating notification:', data);
+        // console.log('Creating notification:', data);
 
         // Lưu vào MongoDB
         const notificationData = {
             recipient: data.recipientId,
             sender: data.senderId,
             type: data.type,
-            content: data.content,
             read: false
         };
 
@@ -30,7 +29,6 @@ const createNotification = async (data) => {
             recipient: data.recipientId,
             sender: data.senderId,
             type: data.type,
-            content: data.content,
             read: false,
             senderName: data.senderName,
             senderAvatar: data.senderAvatar,

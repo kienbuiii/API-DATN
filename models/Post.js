@@ -10,6 +10,8 @@ const CommentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  username: String,
+  userAvatar: String,
   createdAt: {
     type: Date,
     default: Date.now

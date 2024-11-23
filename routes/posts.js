@@ -48,7 +48,6 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
             recipientId: followerId.toString(),
             senderId: req.user.id,
             type: 'new_post',
-            content: `${postUser.username} đã đăng một bài viết mới`,
             postId: savedPost._id.toString(),
             senderName: postUser.username,
             senderAvatar: postUser.avatar
@@ -115,7 +114,7 @@ router.delete('/delete-post/:postId', auth, async (req, res) => {
 
     // Kiểm tra quyền sở hữu bài viết (nếu cần)
     if (post.user.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Bạn không có quyền xóa bài viết này' });
+      return res.status(403).json({ message: 'Bạn kh��ng có quyền xóa bài viết này' });
     }
 
     // Xóa bài viết
@@ -234,21 +233,16 @@ router.post('/:postId/like', auth, async (req, res) => {
       // Gửi thông báo khi like (không phải tự like)
       if (post.user._id.toString() !== userId) {
         try {
-          console.log('Sending like notification...'); // Thêm log để debug
+          // console.log('Sending like notification...'); // Thêm log để debug
           
-          const notificationData = {
+          await createNotification({
             recipientId: post.user._id.toString(),
             senderId: userId,
             type: 'like',
-            content: `${likeUser.username} đã thích bài viết của bạn`,
-            postId: post._id.toString(), // Đảm bảo chuyển ObjectId thành string
+            postId: post._id.toString(),
             senderName: likeUser.username,
             senderAvatar: likeUser.avatar || null
-          };
-          
-          console.log('Notification data:', notificationData); // Thêm log để debug
-          
-          await createNotification(notificationData);
+          });
         } catch (notifError) {
           console.error('Error sending notification:', notifError);
         }
@@ -355,24 +349,27 @@ router.post('/:postId/comments', auth, async (req, res) => {
 
     const commentUser = await User.findById(userId).select('username avatar');
 
+    // Tạo comment mới với username
     const newComment = {
       user: userId,
       content: content,
+      userAvatar: commentUser.avatar,
+      username: commentUser.username,  // Lưu username vào database
       createdAt: new Date()
     };
 
+    // Thêm comment vào post
     post.comments.push(newComment);
     post.commentsCount = post.comments.length;
     await post.save();
 
-    // Gửi thông báo khi comment (không phải tự comment)
+    // Gửi thông báo nếu không phải tự comment
     if (post.user._id.toString() !== userId) {
       try {
         await createNotification({
           recipientId: post.user._id.toString(),
           senderId: userId,
           type: 'comment',
-          content: `${commentUser.username} đã bình luận: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`,
           postId: post._id,
           senderName: commentUser.username,
           senderAvatar: commentUser.avatar
@@ -382,7 +379,7 @@ router.post('/:postId/comments', auth, async (req, res) => {
       }
     }
 
-    // Populate thông tin user cho comment mới
+    // Lấy comment vừa thêm với thông tin đầy đủ
     const populatedPost = await Post.findById(postId)
       .populate({
         path: 'comments.user',
@@ -391,8 +388,11 @@ router.post('/:postId/comments', auth, async (req, res) => {
 
     const addedComment = populatedPost.comments[populatedPost.comments.length - 1];
 
+    // Trả về response với đầy đủ thông tin
     const commentWithFullInfo = {
       ...addedComment.toObject(),
+      userAvatar: commentUser.avatar ? getCloudinaryUrl(commentUser.avatar) : null,
+      username: commentUser.username,  // Đảm bảo username được trả về
       user: addedComment.user ? {
         ...addedComment.user.toObject(),
         avatar: addedComment.user.avatar ? getCloudinaryUrl(addedComment.user.avatar) : null
@@ -424,12 +424,15 @@ router.get('/:postId/comments', async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy bài viết' });
     }
 
-    // Tạo URL đầy đủ cho avatar của mỗi comment
+    // Tạo URL đầy đủ cho avatar và thêm username vào mỗi comment
     const commentsWithFullInfo = post.comments.map(comment => ({
       ...comment.toObject(),
+      username: comment.username || comment.user?.username, // Thêm username từ comment hoặc user
+      userAvatar: comment.userAvatar ? getCloudinaryUrl(comment.userAvatar) : null,
       user: comment.user ? {
         ...comment.user.toObject(),
-        avatar: comment.user.avatar ? `${req.protocol}://${req.get('host')}${comment.user.avatar}` : null
+        username: comment.user.username,
+        avatar: comment.user.avatar ? getCloudinaryUrl(comment.user.avatar) : null
       } : null
     }));
 

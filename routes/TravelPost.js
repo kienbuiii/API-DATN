@@ -333,14 +333,13 @@ router.post('/:postId/toggle-like', auth, async (req, res) => {
           const notificationData = {
             recipientId: post.author._id.toString(),
             senderId: userId,
-            type: 'like',
-            content: `${likeUser.username} đã thích bài viết du lịch của bạn`,
+            type: 'likeTravel',
             postId: post._id.toString(),
             senderName: likeUser.username,
             senderAvatar: likeUser.avatar || null
           };
           
-          console.log('Travel post notification data:', notificationData);
+          // console.log('Travel post notification data:', notificationData);
           
           await createNotification(notificationData);
         } catch (notifError) {
