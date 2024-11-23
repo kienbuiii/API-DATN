@@ -77,9 +77,9 @@ router.get('/', auth, async (req, res) => {
     // Get blocked user IDs
     const blockedUserIds = currentUser.blocked.map(block => block.user.toString());
 
-    // Find posts excluding blocked users
+    // Find posts excluding blocked users and the current user
     const posts = await TravelPost.find({
-      author: { $nin: blockedUserIds } // Exclude posts from blocked users
+      author: { $nin: [...blockedUserIds, currentUser._id] } // Exclude posts from blocked users and the current user
     })
       .populate('author', 'name username avatar dob')
       .sort('-createdAt');
@@ -366,7 +366,6 @@ router.post('/:postId/toggle-like', auth, async (req, res) => {
     });
   }
 });
-
 
 router.get('/a/search', async (req, res) => {
   try {

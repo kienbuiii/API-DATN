@@ -91,4 +91,11 @@ userSchema.methods.calculateAge = function () {
   return moment().diff(moment(this.dob), 'years');
 };
 
+// Hook để xóa tất cả dữ liệu liên quan khi người dùng bị xóa
+userSchema.pre('remove', async function(next) {
+  await Post.deleteMany({ user: this._id });
+  await TravelPost.deleteMany({ author: this._id });
+  next();
+});
+
 module.exports = mongoose.model('User', userSchema);

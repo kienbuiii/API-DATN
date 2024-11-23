@@ -59,4 +59,10 @@ const PostSchema = new mongoose.Schema({
   }
 });
 
+// Hook để xóa các bài viết khi người dùng bị xóa
+PostSchema.pre('remove', async function(next) {
+  await Comment.deleteMany({ post: this._id });
+  next();
+});
+
 module.exports = mongoose.model('Post', PostSchema);
