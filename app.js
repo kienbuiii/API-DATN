@@ -32,13 +32,37 @@ app.use(cors({
   credentials: true
 }));
 
-// Cấu hình Socket.IO với CORS
+// Cấu hình Socket.IO với CORS và tối ưu hóa
 const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
     allowedHeaders: ["Authorization"],
     credentials: true
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling'],
+  path: '/socket.io/',
+  connectTimeout: 45000,
+  maxHttpBufferSize: 1e6
+});
+
+// Middleware cho Socket.IO
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error('Authentication token is required'));
+    }
+    
+    // Verify token here if needed
+    // const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // socket.user = decoded;
+    
+    next();
+  } catch (error) {
+    next(new Error('Invalid authentication token'));
   }
 });
 
@@ -65,29 +89,29 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });
 
-// Socket.IO connection handler (chỉ cho chat)
+// Socket.IO connection handler
 io.on('connection', (socket) => {
-  console.log('New client connected:', socket.id);
+  console.log('\n=== NEW SOCKET CONNECTION ===');
+  console.log('Socket ID:', socket.id);
+  console.log('Total connected sockets:', io.engine.clientsCount);
 
   // Khởi tạo chat handler
   chatHandler(io, socket);
 
-  // Xử lý authentication cho socket (nếu cần)
-  socket.use((packet, next) => {
-    // Kiểm tra token hoặc session ở đây nếu cần
-    // const token = socket.handshake.auth.token;
-    // if (!token) return next(new Error('Authentication error'));
-    next();
-  });
-
   // Xử lý lỗi socket
   socket.on('error', (error) => {
-    console.error('Socket error:', error);
+    console.error('\n=== SOCKET ERROR ===');
+    console.error('Socket ID:', socket.id);
+    console.error('Error:', error);
+    socket.emit('error', { message: 'An error occurred' });
   });
 
   // Xử lý disconnect
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+  socket.on('disconnect', (reason) => {
+    console.log('\n=== SOCKET DISCONNECTED ===');
+    console.log('Socket ID:', socket.id);
+    console.log('Reason:', reason);
+    console.log('Remaining connected sockets:', io.engine.clientsCount);
   });
 });
 
@@ -118,7 +142,6 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
-
 // Unhandled rejection handler
 process.on('unhandledRejection', (err) => {
   console.log('Unhandled Rejection:', err);
