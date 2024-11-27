@@ -50,7 +50,30 @@ const userSchema = new mongoose.Schema({
   vohieuhoa: {
     type: Boolean,
     default: false
-  }
+  },
+  conversations: [{
+    with: { 
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    lastMessage: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message'
+    },
+    unreadCount: {
+      type: Number,
+      default: 0
+    }
+  }],
+  isOnline: { 
+    type: Boolean, 
+    default: false 
+  },
+  lastActive: { 
+    type: Date,
+    default: Date.now 
+  },
+  socketId: String
 }, 
 
 {

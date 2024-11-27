@@ -1,177 +1,183 @@
-const Message = require('../models/Message');
 const User = require('../models/User');
-
-// Lưu trạng thái người dùng
-const onlineUsers = new Map(); // Lưu trữ userId -> socketId
-const userSockets = new Map(); // Lưu trữ socketId -> userId
-const lastActiveTime = new Map(); // Lưu trữ userId -> lastActiveTime
+const Message = require('../models/Message');
 
 const chatHandler = (io, socket) => {
-    // Xử lý khi user kết nối
-    socket.on('userConnected', async (userId) => {
+    // Xử lý user kết nối
+    socket.on('user_connected', async (userId) => {
         try {
-            // Lưu thông tin user online
-            onlineUsers.set(userId, socket.id);
-            userSockets.set(socket.id, userId);
-            lastActiveTime.set(userId, new Date());
-
-            // Join vào room cá nhân
-            socket.join(`user_${userId}`);
-
-            // Thông báo cho tất cả user khác về trạng thái online
-            io.emit('userStatusChanged', {
+            // Cập nhật trạng thái user
+            const updatedUser = await User.findByIdAndUpdate(
                 userId,
-                isOnline: true,
-                lastActive: new Date()
-            });
+                {
+                    isOnline: true,
+                    lastActive: new Date(),
+                    socketId: socket.id
+                },
+                { new: true }
+            ).select('username avatar isOnline');
 
-            // Gửi danh sách user online cho client vừa kết nối
-            const onlineUsersList = Array.from(onlineUsers.keys());
-            socket.emit('onlineUsers', onlineUsersList);
+            if (updatedUser) {
+                // Broadcast trạng thái online cho tất cả users
+                io.emit('user_status_changed', {
+                    userId: updatedUser._id,
+                    isOnline: true,
+                    username: updatedUser.username,
+                    avatar: updatedUser.avatar
+                });
 
+                // Join vào room riêng của user
+                socket.join(`user_${userId}`);
+            }
         } catch (error) {
-            console.error('Error in userConnected:', error);
+            console.error('Error in user_connected:', error);
         }
-    });
-
-    socket.on('joinChat', ({ userId, receiverId }) => {
-        socket.join(`chat_${userId}_${receiverId}`);
-        socket.join(`chat_${receiverId}_${userId}`);
     });
 
     // Xử lý gửi tin nhắn
-    socket.on('sendMessage', async (messageData) => {
+    socket.on('send_message', async (data) => {
         try {
-            console.log('Received message data:', messageData); // Debug log
+            const { senderId, receiverId, content, type = 'text', tempId } = data;
 
-            const { senderId, receiverId, adminId, text, type = 'text' } = messageData;
-
-            // Detailed validation
-            if (!senderId && !adminId) {
-                throw new Error('senderId or adminId is required');
-            }
-            if (!receiverId) {
-                throw new Error('receiverId is required');
-            }
-            if (!text || !text.trim()) {
-                throw new Error('message text is required');
-            }
-
-            // Create new message with optional adminId
-            const newMessage = new Message({
-                senderId: adminId || senderId,
-                receiverId,
-                text: text.trim(),
+            // Tạo và lưu tin nhắn mới
+            const newMessage = await Message.create({
+                sender: senderId,
+                receiver: receiverId,
+                content,
                 type,
-                status: 'sent',
-                createdAt: new Date(),
                 read: false,
-                isAdminMessage: !!adminId
+                createdAt: new Date()
             });
 
-            console.log('Creating new message:', newMessage); // Debug log
-
-            await newMessage.save();
-
-            // Populate thông tin người gửi và người nhận
+            // Populate thông tin sender
             const populatedMessage = await Message.findById(newMessage._id)
-                .populate('senderId', 'username avatar')
-                .populate('receiverId', 'username avatar');
+                .populate('sender', 'username avatar')
+                .lean();
 
-            // Gửi tin nhắn đến cả người gửi và người nhận
-            io.to(`chat_${senderId}_${receiverId}`)
-              .to(`chat_${receiverId}_${senderId}`)
-              .emit('newMessage', {
-                success: true,
-                message: populatedMessage
+            // Cập nhật hoặc tạo conversation cho cả sender và receiver
+            const updateConversation = async (userId, partnerId, unreadCount) => {
+                const user = await User.findById(userId);
+                const convIndex = user.conversations.findIndex(
+                    conv => conv.with.toString() === partnerId
+                );
+
+                if (convIndex === -1) {
+                    // Tạo conversation mới
+                    user.conversations.unshift({
+                        with: partnerId,
+                        lastMessage: newMessage._id,
+                        unreadCount
+                    });
+                } else {
+                    // Cập nhật conversation hiện có
+                    user.conversations[convIndex].lastMessage = newMessage._id;
+                    user.conversations[convIndex].unreadCount = unreadCount;
+                    // Đưa conversation lên đầu
+                    const [conv] = user.conversations.splice(convIndex, 1);
+                    user.conversations.unshift(conv);
+                }
+
+                await user.save();
+            };
+
+            // Cập nhật conversations
+            await Promise.all([
+                updateConversation(senderId, receiverId, 0),
+                updateConversation(receiverId, senderId, 1)
+            ]);
+
+            // Gửi tin nhắn và cập nhật conversation
+            const conversationUpdate = {
+                messageId: newMessage._id,
+                content,
+                createdAt: newMessage.createdAt,
+                senderId,
+                receiverId,
+                type
+            };
+
+            // Gửi cho receiver
+            io.to(`user_${receiverId}`).emit('receive_message', populatedMessage);
+            io.to(`user_${receiverId}`).emit('conversation_updated', conversationUpdate);
+
+            // Gửi xác nhận cho sender
+            socket.emit('message_sent', {
+                ...populatedMessage,
+                tempId
             });
-
-            // Kiểm tra trạng thái online
-            if (!onlineUsers.has(receiverId)) {
-                io.to(`user_${receiverId}`).emit('unreadMessage', {
-                    success: true,
-                    from: senderId,
-                    message: populatedMessage
-                });
-            } else {
-                // Cập nhật trạng thái delivered nếu online
-                newMessage.status = 'delivered';
-                await newMessage.save();
-            }
+            socket.emit('conversation_updated', conversationUpdate);
 
         } catch (error) {
-            console.error('Error in sendMessage:', error);
-            socket.emit('messageSendError', { 
-                success: false,
-                error: error.message 
+            console.error('Error in send_message:', error);
+            socket.emit('message_error', { 
+                error: 'Failed to send message', 
+                tempId: data.tempId 
             });
         }
     });
 
-    // Xử lý đánh dấu tin nhắn đã đọc
-    socket.on('markMessageRead', async ({ messageId, userId }) => {
+    // Xử lý đánh dấu đã đọc
+    socket.on('mark_messages_read', async (data) => {
         try {
-            const message = await Message.findByIdAndUpdate(
-                messageId,
-                { read: true },
-                { new: true }
-            ).populate('senderId', 'username avatar')
-             .populate('receiverId', 'username avatar');
+            const { userId, fromUserId } = data;
+            
+            // Cập nhật trạng thái tin nhắn và conversation
+            await Promise.all([
+                Message.updateMany(
+                    {
+                        sender: fromUserId,
+                        receiver: userId,
+                        read: false
+                    },
+                    { read: true }
+                ),
+                User.findOneAndUpdate(
+                    { 
+                        _id: userId,
+                        'conversations.with': fromUserId 
+                    },
+                    { 
+                        $set: { 'conversations.$.unreadCount': 0 }
+                    }
+                )
+            ]);
 
-            if (message) {
-                io.to(`user_${message.senderId}`).emit('messageRead', message);
-                io.to(`user_${message.receiverId}`).emit('messageRead', message);
+            // Thông báo cho sender
+            io.to(`user_${fromUserId}`).emit('messages_marked_read', { 
+                fromUserId,
+                byUserId: userId 
+            });
+        } catch (error) {
+            console.error('Error in mark_messages_read:', error);
+        }
+    });
+
+    // Xử lý ngắt kết nối
+    socket.on('disconnect', async () => {
+        try {
+            const user = await User.findOneAndUpdate(
+                { socketId: socket.id },
+                {
+                    isOnline: false,
+                    lastActive: new Date(),
+                    socketId: null
+                },
+                { new: true }
+            ).select('_id username avatar');
+
+            if (user) {
+                socket.leave(`user_${user._id}`);
+                io.emit('user_status_changed', {
+                    userId: user._id,
+                    isOnline: false,
+                    username: user.username,
+                    avatar: user.avatar,
+                    lastActive: new Date()
+                });
             }
         } catch (error) {
-            console.error('Error in markMessageRead:', error);
+            console.error('Error in disconnect:', error);
         }
-    });
-
-    // Xử lý typing status
-    socket.on('typing', ({ senderId, receiverId }) => {
-        io.to(`user_${receiverId}`).emit('userTyping', { userId: senderId });
-    });
-
-    socket.on('stopTyping', ({ senderId, receiverId }) => {
-        io.to(`user_${receiverId}`).emit('userStopTyping', { userId: senderId });
-    });
-
-    // Xử lý khi user disconnect
-    socket.on('disconnect', () => {
-        const userId = userSockets.get(socket.id);
-        if (userId) {
-            // Cập nhật thời gian hoạt động cuối
-            lastActiveTime.set(userId, new Date());
-            
-            // Xóa thông tin user khỏi danh sách online
-            onlineUsers.delete(userId);
-            userSockets.delete(socket.id);
-
-            // Thông báo cho tất cả user khác
-            io.emit('userStatusChanged', {
-                userId,
-                isOnline: false,
-                lastActive: new Date()
-            });
-        }
-    });
-
-    // Xử lý lấy trạng thái online của một user
-    socket.on('getUserStatus', async (userId) => {
-        const isOnline = onlineUsers.has(userId);
-        const lastActive = lastActiveTime.get(userId);
-        socket.emit('userStatus', {
-            userId,
-            isOnline,
-            lastActive
-        });
     });
 };
 
-// Export các functions và biến cần thiết
-module.exports = {
-    chatHandler,
-    onlineUsers,
-    lastActiveTime,
-    isUserOnline: (userId) => onlineUsers.has(userId)
-};
+module.exports = { chatHandler };
