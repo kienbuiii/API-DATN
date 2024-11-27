@@ -44,11 +44,11 @@ const chatHandler = (io, socket) => {
         try {
             console.log('Received message data:', messageData); // Debug log
 
-            const { senderId, receiverId, text, type = 'text' } = messageData;
+            const { senderId, receiverId, adminId, text, type = 'text' } = messageData;
 
             // Detailed validation
-            if (!senderId) {
-                throw new Error('senderId is required');
+            if (!senderId && !adminId) {
+                throw new Error('senderId or adminId is required');
             }
             if (!receiverId) {
                 throw new Error('receiverId is required');
@@ -57,15 +57,16 @@ const chatHandler = (io, socket) => {
                 throw new Error('message text is required');
             }
 
-            // Create new message
+            // Create new message with optional adminId
             const newMessage = new Message({
-                senderId,
+                senderId: adminId || senderId,
                 receiverId,
                 text: text.trim(),
                 type,
                 status: 'sent',
                 createdAt: new Date(),
-                read: false
+                read: false,
+                isAdminMessage: !!adminId
             });
 
             console.log('Creating new message:', newMessage); // Debug log
