@@ -657,31 +657,49 @@ router.post('/unblock/:userId', auth, async (req, res) => {
 });
 router.get('/blocked-users', auth, async (req, res) => {
   try {
+    console.log('Getting blocked users for user:', req.user.id);
+
     const currentUser = await User.findById(req.user.id)
       .populate({
         path: 'blocked.user',
-        select: 'username avatar email'  // Chọn các trường muốn lấy
+        select: 'username avatar email'
       });
 
     if (!currentUser) {
-      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Không tìm thấy người dùng' 
+      });
     }
 
-    // Format lại dữ liệu trước khi gửi về client
-    const blockedUsers = currentUser.blocked.map(block => ({
-      id: block.user._id,
-      username: block.user.username,
-      avatar: block.user.avatar,
-      email: block.user.email,
-      blockedAt: block.timestamp
-    }));
+    // Kiểm tra và lọc các giá trị null/undefined
+    const blockedUsers = currentUser.blocked
+      .filter(block => block && block.user) // Lọc bỏ các giá trị null/undefined
+      .map(block => ({
+        id: block.user._id,
+        username: block.user.username || 'Người dùng',
+        avatar: block.user.avatar || '',
+        email: block.user.email || '',
+        blockedAt: block.timestamp || new Date()
+      }));
 
-    res.json(blockedUsers);
+    console.log('Processed blocked users:', blockedUsers);
+
+    res.json({
+      success: true,
+      data: blockedUsers
+    });
+
   } catch (error) {
     console.error('Error getting blocked users:', error);
-    res.status(500).json({ message: 'Lỗi server' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Lỗi server khi lấy danh sách người dùng bị chặn',
+      error: error.message 
+    });
   }
 });
+
 router.get('/check-block-status/:userId', auth, async (req, res) => {
   try {
     const currentUser = await User.findById(req.user.id);
