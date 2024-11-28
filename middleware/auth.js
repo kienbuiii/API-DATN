@@ -4,7 +4,7 @@ const User = require('../models/User');
 module.exports = async function(req, res, next) {
     try {
         const authHeader = req.header('Authorization');
-       // console.log('Received Authorization header:', authHeader);
+        console.log('Received Authorization header:', authHeader);
 
         if (!authHeader) {
             return res.status(401).json({ 
@@ -21,11 +21,11 @@ module.exports = async function(req, res, next) {
         }
 
         const token = authHeader.slice(7);
-       // console.log('Extracted token:', token);
+        console.log('Extracted token:', token);
 
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-           // console.log('Decoded token:', decoded);
+            console.log('Decoded token:', decoded);
 
             const userId = decoded.id || decoded._id;
             
@@ -38,7 +38,7 @@ module.exports = async function(req, res, next) {
             }
 
             const user = await User.findById(userId);
-           // console.log('Found user:', user ? user._id : 'No user found');
+            console.log('Found user:', user ? user._id : 'No user found');
 
             if (!user) {
                 return res.status(401).json({ 
