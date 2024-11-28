@@ -122,97 +122,169 @@ router.post('/login', async (req, res) => {
   }
 });
 
-
 router.post('/users/search', checkAdminRole, async (req, res) => {
   try {
     const {
-      keyword = '',
-      status,
-      role,
-      dateRange,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      order = 'desc'
+      searchTerm = '', // Tìm kiếm theo username, email hoặc fullName
+      filters = {
+        status: '',    // active, inactive, banned
+        role: '',      // user, admin
+        vohieuhoa: '', // true, false
+        verified: '',  // true, false
+        gender: ''     // male, female, other
+      },
+      dateRange = {
+        startDate: '',
+        endDate: ''
+      },
+      sortOptions = {
+        field: 'createdAt', // createdAt, username, email, lastActive
+        order: 'desc'       // asc, desc
+      },
+      pagination = {
+        page: 1,
+        limit: 10
+      }
     } = req.body;
 
     // Xây dựng query tìm kiếm
-    const searchQuery = {};
-    
-    // Thêm điều kiện tìm kiếm theo keyword
-    if (keyword) {
+    let searchQuery = {};
+
+    // Tìm kiếm theo nhiều trường
+    if (searchTerm) {
       searchQuery.$or = [
-        { username: { $regex: keyword, $options: 'i' } },
-        { email: { $regex: keyword, $options: 'i' } }
+        { username: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { fullName: { $regex: searchTerm, $options: 'i' } },
+        { phone: { $regex: searchTerm, $options: 'i' } }
       ];
     }
 
-    // Thêm điều kiện tìm kiếm theo status nếu có
-    if (status) {
-      searchQuery.status = status;
-    }
-
-    // Thêm điều kiện tìm kiếm theo role nếu có
-    if (role) {
-      searchQuery.role = role;
-    }
-
-    // Thêm điều kiện tìm kiếm theo khoảng thời gian nếu có
-    if (dateRange) {
-      const { startDate, endDate } = dateRange;
-      if (startDate && endDate) {
-        searchQuery.createdAt = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
-        };
+    // Áp dụng các bộ lọc
+    Object.keys(filters).forEach(key => {
+      if (filters[key] !== '') {
+        if (key === 'vohieuhoa' || key === 'verified') {
+          searchQuery[key] = filters[key] === 'true';
+        } else {
+          searchQuery[key] = filters[key];
+        }
       }
+    });
+
+    // Lọc theo khoảng thời gian
+    if (dateRange.startDate && dateRange.endDate) {
+      searchQuery.createdAt = {
+        $gte: new Date(dateRange.startDate),
+        $lte: new Date(dateRange.endDate)
+      };
     }
 
-    // Tính toán skip cho phân trang
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Tính toán phân trang
+    const page = parseInt(pagination.page);
+    const limit = parseInt(pagination.limit);
+    const skip = (page - 1) * limit;
 
     // Xây dựng sort options
-    const sortOptions = {};
-    sortOptions[sortBy] = order === 'asc' ? 1 : -1;
+    const sortCriteria = {};
+    sortCriteria[sortOptions.field] = sortOptions.order === 'asc' ? 1 : -1;
 
-    // Thực hiện tìm kiếm với phân trang
-    const users = await User.find(searchQuery)
-      .select('-password')
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .lean();
+    // Thực hiện truy vấn với aggregate pipeline
+    const aggregatePipeline = [
+      { $match: searchQuery },
+      {
+        $lookup: {
+          from: 'posts',
+          localField: '_id',
+          foreignField: 'user',
+          as: 'posts'
+        }
+      },
+      {
+        $addFields: {
+          postsCount: { $size: '$posts' },
+          followersCount: { $size: { $ifNull: ['$followers', []] } },
+          followingCount: { $size: { $ifNull: ['$following', []] } },
+          accountAge: {
+            $divide: [
+              { $subtract: [new Date(), '$createdAt'] },
+              1000 * 60 * 60 * 24 // Chuyển đổi thành số ngày
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          password: 0,
+          posts: 0, // Loại bỏ mảng posts sau khi đã đếm
+          __v: 0
+        }
+      }
+    ];
 
-    // Đếm tổng số kết quả
-    const total = await User.countDocuments(searchQuery);
+    // Thêm sorting và pagination vào pipeline
+    aggregatePipeline.push(
+      { $sort: sortCriteria },
+      { $skip: skip },
+      { $limit: limit }
+    );
 
-    // Thêm thông tin thống kê cho mỗi user
+    // Thực hiện truy vấn
+    const [users, totalCount] = await Promise.all([
+      User.aggregate(aggregatePipeline),
+      User.countDocuments(searchQuery)
+    ]);
+
+    // Thêm thông tin hoạt động gần đây
     const enhancedUsers = await Promise.all(users.map(async (user) => {
-      const postsCount = await Post.countDocuments({ user: user._id });
-      const followersCount = user.followers ? user.followers.length : 0;
-      const followingCount = user.following ? user.following.length : 0;
-      const accountAge = Math.floor((new Date() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
+      // Lấy bài viết gần nhất
+      const latestPost = await Post.findOne({ user: user._id })
+        .sort({ createdAt: -1 })
+        .select('createdAt');
+
+      // Lấy comment gần nhất
+      const latestComment = await Post.findOne(
+        { 'comments.user': user._id },
+        { 'comments.$': 1 }
+      ).sort({ 'comments.createdAt': -1 });
 
       return {
         ...user,
-        stats: {
-          postsCount,
-          followersCount,
-          followingCount,
-          accountAge // số ngày từ khi tạo tài khoản
+        recentActivity: {
+          lastPost: latestPost?.createdAt || null,
+          lastComment: latestComment?.comments[0]?.createdAt || null,
+          lastLogin: user.lastLogin || null
         }
       };
     }));
+
+    // Tính toán thống kê tổng quan
+    const statistics = {
+      totalUsers: totalCount,
+      activeUsers: await User.countDocuments({ ...searchQuery, status: 'active' }),
+      verifiedUsers: await User.countDocuments({ ...searchQuery, verified: true }),
+      bannedUsers: await User.countDocuments({ ...searchQuery, status: 'banned' })
+    };
 
     res.status(200).json({
       success: true,
       data: {
         users: enhancedUsers,
         pagination: {
-          total,
-          page: parseInt(page),
-          totalPages: Math.ceil(total / parseInt(limit)),
-          limit: parseInt(limit)
+          total: totalCount,
+          page,
+          totalPages: Math.ceil(totalCount / limit),
+          limit
+        },
+        statistics,
+        filters: {
+          applied: Object.entries(filters)
+            .filter(([_, value]) => value !== '')
+            .length,
+          available: {
+            status: ['active', 'inactive', 'banned'],
+            role: ['user', 'admin'],
+            gender: ['male', 'female', 'other']
+          }
         }
       },
       message: enhancedUsers.length ? 'Tìm kiếm thành công' : 'Không tìm thấy kết quả'
@@ -227,7 +299,6 @@ router.post('/users/search', checkAdminRole, async (req, res) => {
     });
   }
 });
-
 // Route chi tiết user (đặt SAU route search)
 router.post('/users/detail/:userId', checkAdminRole, async (req, res) => {
   try {
@@ -476,8 +547,11 @@ router.post('/dashboard-stats', checkAdminRole, async (req, res) => {
     // Lấy tổng số người dùng (không tính admin)
     const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
     
-    // Lấy tổng số bài viết
-    const totalPosts = await Post.countDocuments();
+    // Lấy tổng số bài feed
+    const totalFeeds = await Post.countDocuments();
+
+    // Lấy tổng số bài travel post
+    const totalTravelPosts = await TravelPost.countDocuments();
     
     // Lấy số người dùng mới trong 7 ngày qua
     const lastWeek = new Date();
@@ -487,18 +561,39 @@ router.post('/dashboard-stats', checkAdminRole, async (req, res) => {
       role: { $ne: 'admin' }
     });
 
-    // Lấy số bài viết mới trong 7 ngày qua
-    const newPosts = await Post.countDocuments({
+    // Lấy số bài feed mới trong 7 ngày qua
+    const newFeeds = await Post.countDocuments({
       createdAt: { $gte: lastWeek }
     });
+
+    // Lấy số bài travel post mới trong 7 ngày qua
+    const newTravelPosts = await TravelPost.countDocuments({
+      createdAt: { $gte: lastWeek }
+    });
+
+    // Tính tổng số bài viết (feed + travel post)
+    const totalPosts = totalFeeds + totalTravelPosts;
+    const newTotalPosts = newFeeds + newTravelPosts;
 
     res.status(200).json({
       success: true,
       data: {
-        totalUsers,
-        totalPosts,
-        newUsers,
-        newPosts,
+        users: {
+          total: totalUsers,
+          new: newUsers
+        },
+        posts: {
+          total: totalPosts,
+          new: newTotalPosts,
+          feeds: {
+            total: totalFeeds,
+            new: newFeeds
+          },
+          travelPosts: {
+            total: totalTravelPosts,
+            new: newTravelPosts
+          }
+        },
         lastUpdated: new Date()
       },
       message: 'Lấy thống kê thành công'

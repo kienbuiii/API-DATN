@@ -11,11 +11,14 @@ const admin = require('./config/firebase'); // Thêm import Firebase Admin
 const userRoutes = require('./routes/user');
 const postRoutes = require('./routes/posts');
 const adminRouter = require('./routes/admin');
+const reportRouter = require('./routes/reportRouter');
+
 const scanRoutes = require('./routes/scan');
 const travelPostRoutes = require('./routes/TravelPost');
 const notificationRoutes = require('./routes/notification');
 const chatRoutes = require('./routes/chatRouter');
-const soThich = require('./models/soThich');
+
+
 
 const app = express();
 const server = http.createServer(app);
@@ -74,12 +77,14 @@ connectDB();
 
 // Middleware
 app.use(express.json());
+
 app.use('/api/users', userRoutes);
 app.use('/uploads', express.static('uploads'));
 app.use('/api/posts', postRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/travel-posts', travelPostRoutes);
-app.use('/api/soThich', soThich);
+app.use('/api/reports', reportRouter);
+
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRouter);
