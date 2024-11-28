@@ -23,6 +23,10 @@ const messageSchema = new mongoose.Schema({
     type: String,
     enum: ['text', 'image'],
     default: 'text'
+  },
+  isAdminMessage: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true

@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Message = require('../models/Message'); // Thêm import Message model
 const mongoose = require('mongoose');
+const { ObjectId } = mongoose.Types;
 // Middleware kiểm tra role admin
 // Trong middleware checkAdminRole
 const checkAdminRole = async (req, res, next) => {
@@ -488,7 +489,7 @@ router.delete('/users/:userId', checkAdminRole, async (req, res) => {
     // 7. Xóa tất cả các bài viết của người dùng
     await Post.deleteMany({ user: userId });
 
-    // 8. Lấy tất cả các bài đăng du lịch của người dùng
+    // 8. Ly tất cả các bài đăng du lịch của người dùng
     const userTravelPosts = await TravelPost.find({ author: userId });
 
     // 9. Xóa tất cả các like từ các bài đăng du lịch của người dùng
@@ -681,84 +682,349 @@ router.post('/users/:userId/enable', checkAdminRole, async (req, res) => {
   }
 });
 
-// Route gửi tin nhắn
-router.post('/messages', checkAdminRole, async (req, res) => {
-  try {
-    const { receiverId, text, type } = req.body;
+// API lấy lịch sử chat với một user
+router.post('/chat/:userId', checkAdminRole, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const adminId = req.user._id;
 
-    // Kiểm tra thông tin đầu vào
-    if (!receiverId || !text) {
-      return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin' });
+        if (!ObjectId.isValid(userId) || !ObjectId.isValid(adminId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid ID format'
+            });
+        }
+
+        const messages = await Message.find({
+            $or: [
+                { sender: adminId, receiver: userId },
+                { sender: userId, receiver: adminId }
+            ]
+        })
+        .sort({ createdAt: 1 })
+        .populate('sender', 'username avatar')
+        .populate('receiver', 'username avatar');
+
+        res.json({
+            success: true,
+            data: messages
+        });
+
+    } catch (error) {
+        console.error('Error fetching chat history:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi lấy lịch sử chat',
+            error: error.message
+        });
     }
-
-    // Tạo tin nhắn mới
-    const message = new Message({
-      senderId: req.user.id, // ID của admin
-      receiverId,
-      text,
-      type: type || 'text' // Nếu không có type, mặc định là 'text'
-    });
-
-    await message.save();
-
-    // Emit sự kiện cho người nhận
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`user_${receiverId}`).emit('newMessage', message);
-    }
-
-    res.status(201).json({ message: 'Tin nhắn đã được gửi thành công', data: message });
-  } catch (error) {
-    console.error('Lỗi gửi tin nhắn:', error);
-    res.status(500).json({ message: 'Lỗi server khi gửi tin nhắn', error: error.message });
-  }
 });
 
-// Route lấy tất cả người dùng
-router.post('/users/all', checkAdminRole, async (req, res) => {
+// API gửi tin nhắn từ admin
+router.post('/chat/send/:userId', checkAdminRole, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { content, type = 'text' } = req.body;
+        const adminId = req.user._id;
+
+        if (!ObjectId.isValid(userId) || !ObjectId.isValid(adminId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid ID format'
+            });
+        }
+
+        const newMessage = new Message({
+            sender: adminId,
+            receiver: userId,
+            content,
+            type,
+            isAdminMessage: true
+        });
+
+        await newMessage.save();
+
+        const populatedMessage = await Message.findById(newMessage._id)
+            .populate('sender', 'username avatar')
+            .populate('receiver', 'username avatar');
+
+        // Emit socket event nếu có socket.io
+        if (req.app.get('io')) {
+            const io = req.app.get('io');
+            const userSocket = await User.findById(userId).select('socketId');
+            if (userSocket?.socketId) {
+                io.to(userSocket.socketId).emit('newMessage', {
+                    message: populatedMessage
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            data: populatedMessage,
+            message: 'Gửi tin nhắn thành công'
+        });
+
+    } catch (error) {
+        console.error('Error sending message:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi gửi tin nhắn',
+            error: error.message
+        });
+    }
+});
+
+// Thay đổi từ router.patch sang router.post
+router.post('/chat/mark-read/:userId', checkAdminRole, async (req, res) => {
   try {
-      const users = await User.find().select('-password').sort({ createdAt: -1 });
-      res.status(200).json({
+      const { userId } = req.params;
+      const adminId = req.user._id;
+
+      if (!ObjectId.isValid(userId) || !ObjectId.isValid(adminId)) {
+          return res.status(400).json({
+              success: false,
+              message: 'Invalid ID format'
+          });
+      }
+
+      await Message.updateMany(
+          {
+              sender: userId,
+              receiver: adminId,
+              read: false
+          },
+          { read: true }
+      );
+
+      res.json({
           success: true,
-          data: users,
-          message: users.length ? 'Lấy danh sách người dùng thành công' : 'Không có người dùng'
+          message: 'Đánh dấu tin nhắn đã đọc thành công'
       });
+
   } catch (error) {
-      console.error('Lỗi lấy người dùng:', error);
+      console.error('Error marking messages as read:', error);
       res.status(500).json({
           success: false,
-          message: 'Lỗi server khi lấy người dùng',
+          message: 'Lỗi server khi đánh dấu tin nhắn đã đọc',
           error: error.message
       });
   }
 });
+// API lấy danh sách cuộc trò chuyện của admin
+router.post('/conversations', checkAdminRole, async (req, res) => {
+    try {
+        const adminId = req.user._id;
 
-// Route lấy lịch sử trò chuyện với người dùng
-router.post('/chat-history/:userId', checkAdminRole, async (req, res) => {
-  try {
-    const { userId } = req.params;
+        if (!ObjectId.isValid(adminId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid admin ID format'
+            });
+        }
 
-    // Kiểm tra xem userId có phải là ObjectId hợp lệ không
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ message: 'ID người dùng không hợp lệ' });
+        const conversations = await Message.aggregate([
+            {
+                $match: {
+                    $or: [
+                        { sender: new ObjectId(adminId) },
+                        { receiver: new ObjectId(adminId) }
+                    ]
+                }
+            },
+            {
+                $sort: { createdAt: -1 }
+            },
+            {
+                $group: {
+                    _id: {
+                        $cond: {
+                            if: { $eq: ['$sender', new ObjectId(adminId)] },
+                            then: '$receiver',
+                            else: '$sender'
+                        }
+                    },
+                    lastMessage: { $first: '$$ROOT' },
+                    unreadCount: {
+                        $sum: {
+                            $cond: [
+                                { 
+                                    $and: [
+                                        { $eq: ['$receiver', new ObjectId(adminId)] },
+                                        { $eq: ['$read', false] }
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'userInfo'
+                }
+            },
+            {
+                $unwind: '$userInfo'
+            },
+            {
+                $project: {
+                    _id: 1,
+                    lastMessage: 1,
+                    unreadCount: 1,
+                    user: {
+                        _id: '$userInfo._id',
+                        username: '$userInfo.username',
+                        avatar: '$userInfo.avatar',
+                        isOnline: '$userInfo.isOnline',
+                        lastActive: '$userInfo.lastActive'
+                    }
+                }
+            },
+            {
+                $sort: { 'lastMessage.createdAt': -1 }
+            }
+        ]);
+
+        res.json({
+            success: true,
+            data: conversations
+        });
+
+    } catch (error) {
+        console.error('Error fetching conversations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi lấy danh sách cuộc trò chuyện',
+            error: error.message
+        });
     }
-
-    // Lấy tất cả tin nhắn giữa admin và người dùng
-    const chatHistory = await Message.find({
-      $or: [
-        { senderId: req.user.id, receiverId: userId },
-        { senderId: userId, receiverId: req.user.id }
-      ]
-    })
-    .populate('senderId', 'username avatar')
-    .populate('receiverId', 'username avatar')
-    .sort({ createdAt: -1 });
-
-    res.status(200).json({ success: true, data: chatHistory });
-  } catch (error) {
-    console.error('Lỗi lấy lịch sử trò chuyện:', error);
-    res.status(500).json({ message: 'Lỗi server khi lấy lịch sử trò chuyện', error: error.message });
-  }
 });
 
+// API lấy số tin nhắn chưa đọc cho admin
+router.post('/unread-count', checkAdminRole, async (req, res) => {
+    try {
+        const adminId = req.user._id;
+
+        if (!ObjectId.isValid(adminId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid admin ID format'
+            });
+        }
+
+        const unreadCount = await Message.countDocuments({
+            receiver: adminId,
+            read: false
+        });
+
+        res.json({
+            success: true,
+            data: { unreadCount }
+        });
+
+    } catch (error) {
+        console.error('Error getting unread count:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi lấy số tin nhắn chưa đọc',
+            error: error.message
+        });
+    }
+});
+router.post('/users/all', checkAdminRole, async (req, res) => {
+  try {
+      const {
+          page = 1,
+          limit = 10,
+          search = '',
+          sortBy = 'createdAt',
+          sortOrder = -1,
+          filters = {}
+      } = req.body;
+
+      // Xây dựng query filters
+      const query = {};
+      
+      // Tìm kiếm theo username hoặc email
+      if (search) {
+          query.$or = [
+              { username: { $regex: search, $options: 'i' } },
+              { email: { $regex: search, $options: 'i' } }
+          ];
+      }
+
+      // Thêm các điều kiện lọc
+      if (filters.role) {
+          query.role = filters.role;
+      }
+      if (filters.vohieuhoa !== undefined) {
+          query.vohieuhoa = filters.vohieuhoa;
+      }
+      if (filters.verified !== undefined) {
+          query.verified = filters.verified;
+      }
+      if (filters.gender) {
+          query.gender = filters.gender;
+      }
+      if (filters.isOnline !== undefined) {
+          query.isOnline = filters.isOnline;
+      }
+
+      // Tính toán skip cho pagination
+      const skip = (page - 1) * limit;
+
+      // Thực hiện query với mongoose
+      const [users, total] = await Promise.all([
+          User.find(query)
+              .select('username email avatar isOnline lastActive createdAt vohieuhoa role') // Chỉ lấy các trường cần thiết
+              .sort({ [sortBy]: sortOrder })
+              .skip(skip)
+              .limit(limit)
+              .lean(), // Chuyển sang plain object để tăng performance
+          User.countDocuments(query)
+      ]);
+
+      // Thêm thông tin trạng thái cho mỗi user
+      const enhancedUsers = users.map(user => ({
+          ...user,
+          status: user.isOnline ? 'online' : 'offline',
+          lastActive: user.lastActive || user.updatedAt
+      }));
+
+      // Tính toán thông tin pagination
+      const totalPages = Math.ceil(total / limit);
+      const hasNextPage = page < totalPages;
+      const hasPrevPage = page > 1;
+
+      res.json({
+          success: true,
+          data: {
+              users: enhancedUsers,
+              pagination: {
+                  total,
+                  totalPages,
+                  currentPage: page,
+                  limit,
+                  hasNextPage,
+                  hasPrevPage
+              }
+          },
+          message: 'Lấy danh sách người dùng thành công'
+      });
+
+  } catch (error) {
+      console.error('Error fetching users:', error);
+      res.status(500).json({
+          success: false,
+          message: 'Lỗi server khi lấy danh sách người dùng',
+          error: error.message
+      });
+  }
+});
 module.exports = router;
