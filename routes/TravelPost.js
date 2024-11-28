@@ -10,9 +10,6 @@ const { createNotification } = require('../config/notificationHelper');
 // Create a travel post
 router.post('/create', auth, upload.array('image', 5), async (req, res) => {
   try {
-    console.log('Received data:', req.body);
-    console.log('Received files:', req.files);
-
     const {
       title,
       startDate,
@@ -24,44 +21,93 @@ router.post('/create', auth, upload.array('image', 5), async (req, res) => {
       interests
     } = req.body;
 
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    // Basic validation
+    if (!title?.trim()) {
+      return res.status(400).json({ message: 'Tiêu đề không được để trống' });
     }
 
-    const imageUrls = req.files ? req.files.map(file => file.path) : [];
+    // Date validation
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const proposedStartDate = new Date(startDate);
+    const proposedEndDate = new Date(endDate);
 
+    // Validate date formats
+    if (isNaN(proposedStartDate.getTime()) || isNaN(proposedEndDate.getTime())) {
+      return res.status(400).json({ message: 'Định dạng ngày không hợp lệ' });
+    }
+
+    // Check if start date is in the past
+    if (proposedStartDate < today) {
+      return res.status(400).json({ message: 'Ngày bắt đầu không thể là trong quá khứ' });
+    }
+
+    // Validate start date is before end date
+    if (proposedStartDate >= proposedEndDate) {
+      return res.status(400).json({ message: 'Ngày bắt đầu phải nhỏ hơn ngày kết thúc' });
+    }
+
+    // Get user
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+    }
+
+    // Process images
+    const imageUrls = req.files ? req.files.map(file => file.path) : [];
+    if (imageUrls.length === 0) {
+      return res.status(400).json({ message: 'Cần ít nhất một hình ảnh cho bài viết' });
+    }
+
+    // Create new post
     const newPost = new TravelPost({
       author: req.user.id,
-      title,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      title: title.trim(),
+      startDate: proposedStartDate,
+      endDate: proposedEndDate,
       images: imageUrls,
       currentLocation: {
         type: 'Point',
-        coordinates: [parseFloat(currentLocationLng) || 0, parseFloat(currentLocationLat) || 0]
+        coordinates: [
+          parseFloat(currentLocationLng) || 0,
+          parseFloat(currentLocationLat) || 0
+        ]
       },
       destination: {
         type: 'Point',
-        coordinates: [parseFloat(destinationLng) || 0, parseFloat(destinationLat) || 0]
+        coordinates: [
+          parseFloat(destinationLng) || 0,
+          parseFloat(destinationLat) || 0
+        ]
       },
-      interests: interests ? interests.split(',').map(interest => interest.trim()) : []
+      interests: interests 
+        ? interests.split(',').map(interest => interest.trim()).filter(Boolean)
+        : []
     });
 
-    await newPost.save();
-
-    // Update user's post count and add post reference
-    user.postsCount += 1;
-    user.Post.push(newPost._id);
-    await user.save();
+    // Save post and update user in parallel
+    await Promise.all([
+      newPost.save(),
+      User.findByIdAndUpdate(user._id, {
+        $inc: { postsCount: 1 },
+        $push: { Post: newPost._id }
+      })
+    ]);
 
     res.status(201).json({ 
-      message: 'Post created successfully', 
+      success: true,
+      message: 'Tạo bài viết thành công', 
       post: newPost
     });
+
   } catch (error) {
-    console.error('Error details:', error);
-    res.status(400).json({ message: 'Failed to create post', error: error.message });
+    console.error('Lỗi khi tạo bài viết:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Lỗi khi tạo bài viết', 
+      error: error.message 
+    });
   }
 });
 

@@ -240,10 +240,9 @@ router.get('/thong-tin-ca-nhan', auth, async (req, res) => {
 router.post('/update-avatar', auth, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).send({ message: 'No file uploaded' });
+      return res.status(400).send({ message: 'Không có file được tải lên' });
     }
 
-    // Cloudinary đã tự động upload file, chúng ta chỉ cần lấy URL
     const avatarUrl = req.file.path;
 
     const user = await User.findByIdAndUpdate(
@@ -253,52 +252,54 @@ router.post('/update-avatar', auth, upload.single('avatar'), async (req, res) =>
     );
 
     if (!user) {
-      return res.status(404).send({ message: 'User not found' });
+      return res.status(404).send({ message: 'Không tìm thấy người dùng' });
     }
 
     res.send({ avatar: user.avatar });
   } catch (error) {
-    console.error('Error updating avatar:', error);
-    res.status(500).send({ message: 'Server error' });
+    console.error('Lỗi khi cập nhật ảnh đại diện:', error);
+    res.status(500).send({ message: 'Lỗi máy chủ' });
   }
 });
 
 router.put('/update-profile', auth, async (req, res) => {
     try {
-        const { username, bio, sdt, diachi, sex,tinhtranghonnhan } = req.body;
+        const { username, bio, sdt, diachi, sex, tinhtranghonnhan } = req.body;
 
-        // Tìm user theo ID (được cung cấp bởi middleware auth)
+        // Kiểm tra username bắt buộc
+        if (!username) {
+            return res.status(400).json({ message: 'Username là bắt buộc' });
+        }
+
         const user = await User.findById(req.user.id);
-
         if (!user) {
             return res.status(404).json({ message: 'Không tìm thấy người dùng' });
         }
 
-        // Cập nhật thông tin
-        if (username) user.username = username;
-        if (bio) user.bio = bio;
-        if (sdt) user.sdt = sdt;
-        if (diachi) user.diachi = diachi;
-        if (sex) user.sex = sex;
-        if (tinhtranghonnhan) user.tinhtranghonnhan = tinhtranghonnhan;
+        // Cập nhật username (bắt buộc)
+        user.username = username;
+        
+        // Cập nhật các trường có thể null
+        user.bio = bio || null;
+        user.sdt = sdt || null;
+        user.diachi = diachi || null;
+        user.sex = sex || null;
+        user.tinhtranghonnhan = tinhtranghonnhan || null;
 
-        // Lưu các thay đổi
         await user.save();
 
-        // Trả về thông tin đã cập nhật
         res.json({
             message: 'Cập nhật thông tin thành công',
             user: {
                 id: user._id,
                 username: user.username,
-               
                 bio: user.bio,
                 sdt: user.sdt,
                 diachi: user.diachi,
                 sex: user.sex,
                 email: user.email,
                 avatar: user.avatar,
-                tinhtranghonnhan:user.tinhtranghonnhan
+                tinhtranghonnhan: user.tinhtranghonnhan
             }
         });
     } catch (error) {
@@ -452,7 +453,7 @@ router.get('/followers', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).populate('followers', 'username avatar');
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
     }
 
     const followers = user.followers.map(follower => ({
@@ -463,8 +464,8 @@ router.get('/followers', auth, async (req, res) => {
 
     res.json(followers);
   } catch (error) {
-    console.error('Error fetching followers:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Lỗi khi lấy danh sách người theo dõi:', error);
+    res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
   }
 });
 
@@ -775,15 +776,15 @@ router.post('/update-fcm-token', auth, async (req, res) => {
         const { fcmToken } = req.body;
         
         if (!fcmToken) {
-            return res.status(400).json({ message: 'FCM token is required' });
+            return res.status(400).json({ message: 'Token FCM là bắt buộc' });
         }
 
         await User.findByIdAndUpdate(req.user.id, { fcmToken });
         
-        res.json({ message: 'FCM token updated successfully' });
+        res.json({ message: 'Cập nhật token FCM thành công' });
     } catch (error) {
-        console.error('Update FCM token error:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        console.error('Lỗi cập nhật token FCM:', error);
+        res.status(500).json({ message: 'Lỗi máy chủ', error: error.message });
     }
 });
 module.exports = router;
