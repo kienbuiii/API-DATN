@@ -36,30 +36,16 @@ const chatHandler = (io, socket) => {
     // Xử lý gửi tin nhắn
     socket.on('send_message', async (data) => {
         try {
-            console.log('Received message data:', messageData); // Debug log
+            const { senderId, receiverId, content, type = 'text', tempId } = data;
 
-            const { senderId, receiverId, text, type = 'text' } = messageData;
-
-            // Detailed validation
-            if (!senderId) {
-                throw new Error('senderId is required');
-            }
-            if (!receiverId) {
-                throw new Error('receiverId is required');
-            }
-            if (!text || !text.trim()) {
-                throw new Error('message text is required');
-            }
-
-            // Create new message
-            const newMessage = new Message({
-                senderId,
-                receiverId,
-                text: text.trim(),
+            // Tạo và lưu tin nhắn mới
+            const newMessage = await Message.create({
+                sender: senderId,
+                receiver: receiverId,
+                content,
                 type,
-                status: 'sent',
-                createdAt: new Date(),
-                read: false
+                read: false,
+                createdAt: new Date()
             });
 
             // Populate thông tin sender
@@ -190,64 +176,6 @@ const chatHandler = (io, socket) => {
             }
         } catch (error) {
             console.error('Error in disconnect:', error);
-        }
-    });
-
-    // Xử lý user gửi tin nhắn
-    socket.on('sendMessage', async (data) => {
-        try {
-            const { senderId, receiverId, text, type = 'text' } = data;
-            
-            // Kiểm tra người nhận có phải là admin không
-            const receiver = await User.findById(receiverId);
-            const isAdminReceiver = receiver && receiver.role === 'admin';
-
-            // Tạo tin nhắn mới
-            const newMessage = new Message({
-                sender: senderId,
-                receiver: receiverId,
-                content: text,
-                type,
-                isAdminMessage: false
-            });
-
-            await newMessage.save();
-
-            // Populate thông tin
-            const populatedMessage = await Message.findById(newMessage._id)
-                .populate('sender', 'username avatar')
-                .populate('receiver', 'username avatar');
-
-            // Nếu người nhận là admin
-            if (isAdminReceiver) {
-                // Gửi tin nhắn đến phòng chat admin
-                const adminChatRoom = `chat_${receiverId}_${senderId}`;
-                io.to(adminChatRoom).emit('newMessage', {
-                    message: populatedMessage
-                });
-                
-                // Gửi thông báo cho admin
-                io.to(`admin_${receiverId}`).emit('messageReceived', {
-                    message: populatedMessage
-                });
-            } else {
-                // Xử lý tin nhắn user-to-user như bình thường
-                io.to(`chat_${senderId}_${receiverId}`).emit('newMessage', {
-                    message: populatedMessage
-                });
-            }
-
-            // Gửi xác nhận về cho người gửi
-            socket.emit('messageSent', {
-                success: true,
-                message: populatedMessage
-            });
-
-        } catch (error) {
-            console.error('Error sending message:', error);
-            socket.emit('messageError', {
-                message: 'Không thể gửi tin nhắn'
-            });
         }
     });
 };
