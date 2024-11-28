@@ -5,7 +5,8 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const { chatHandler } = require('./socketHandlers/chatHandlers');
-const admin = require('./config/firebase'); // Thêm import Firebase Admin
+const { adminChatHandler } = require('./socketHandlers/adminChatHandlers');
+const admin = require('./config/firebase');
 
 // Import routes
 const userRoutes = require('./routes/user');
@@ -32,6 +33,7 @@ app.use(cors({
 
 app.use(cors({
   origin: ['http://localhost:3001', 'https://lobster-upward-sunbeam.ngrok-free.app'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
 
@@ -96,27 +98,20 @@ app.get('/health', (req, res) => {
 
 // Socket.IO connection handler
 io.on('connection', (socket) => {
-  console.log('\n=== NEW SOCKET CONNECTION ===');
-  console.log('Socket ID:', socket.id);
-  console.log('Total connected sockets:', io.engine.clientsCount);
+  console.log('New client connected:', socket.id);
 
-  // Khởi tạo chat handler
+  // Xử lý chat thông thường
   chatHandler(io, socket);
+  
+  // Xử lý chat cho admin
+  adminChatHandler(io, socket);
 
-  // Xử lý lỗi socket
   socket.on('error', (error) => {
-    console.error('\n=== SOCKET ERROR ===');
-    console.error('Socket ID:', socket.id);
-    console.error('Error:', error);
-    socket.emit('error', { message: 'An error occurred' });
+    console.error('Socket error:', error);
   });
 
-  // Xử lý disconnect
-  socket.on('disconnect', (reason) => {
-    console.log('\n=== SOCKET DISCONNECTED ===');
-    console.log('Socket ID:', socket.id);
-    console.log('Reason:', reason);
-    console.log('Remaining connected sockets:', io.engine.clientsCount);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
   });
 });
 

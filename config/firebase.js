@@ -5,7 +5,7 @@ const serviceAccount = require('./firebase-service-account.json'); // Tạo file
 if (!admin.apps.length) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL: "https://duantotnghiep-42700-default-rtdb.firebaseio.com/"
+        databaseURL: "https://notifycation-9c71a-default-rtdb.firebaseio.com/"
     });
 }
 
