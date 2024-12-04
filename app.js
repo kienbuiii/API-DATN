@@ -26,14 +26,9 @@ const server = http.createServer(app);
 
 // Cấu hình CORS cho Express
 app.use(cors({
-  origin: '*',
+  origin: ['https://20.2.67.63','http://localhost:3001','https://moral-simple-lioness.ngrok-free.app','https://admin-web-lyart.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-app.use(cors({
-  origin: ['http://localhost:3001', 'https://lobster-upward-sunbeam.ngrok-free.app'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
 
@@ -131,7 +126,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Server URL: http://localhost:${PORT}`);
+  console.log(`Server URL: https://20.2.67.63:${PORT}`);
 });
 
 // Graceful shutdown

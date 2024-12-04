@@ -351,7 +351,74 @@ router.post('/users/detail/:userId', checkAdminRole, async (req, res) => {
   }
 });
 
-router.post('/users/:userId/posts', checkAdminRole, async (req, res) => {
+
+// API lấy chi tiết bài post cho admin
+router.post('/posts/:postId', checkAdminRole, async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    // Kiểm tra postId có hợp lệ không
+    if (!ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID bài viết không hợp lệ'
+      });
+    }
+
+    // Lấy chi tiết bài post với đầy đủ thông tin
+    const post = await Post.findById(postId)
+      .populate('user', 'username email avatar role status vohieuhoa')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'user',
+          select: 'username avatar'
+        }
+      })
+      .populate('likes', 'username avatar')
+      .lean();
+
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy bài viết'
+      });
+    }
+
+    // Thêm các thông tin thống kê
+    const enhancedPost = {
+      ...post,
+      stats: {
+        likesCount: post.likes.length,
+        commentsCount: post.comments.length,
+        engagement: {
+          likeRate: post.likes.length,
+          commentRate: post.comments.length
+        }
+      },
+      createdAtFormatted: new Date(post.createdAt).toLocaleString('vi-VN'),
+      updatedAtFormatted: new Date(post.updatedAt).toLocaleString('vi-VN')
+    };
+
+    res.status(200).json({
+      success: true,
+      data: enhancedPost,
+      message: 'Lấy chi tiết bài viết thành công'
+    });
+
+  } catch (error) {
+    console.error('Error getting post detail:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy chi tiết bài viết',
+      error: error.message
+    });
+  }
+});
+
+
+// API lấy bài travel của user
+router.post('/users/:userId/travel', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
     const { page = 1, limit = 10 } = req.body;
@@ -365,30 +432,42 @@ router.post('/users/:userId/posts', checkAdminRole, async (req, res) => {
       });
     }
 
-    // Lấy posts của user với error handling
-    const posts = await Post.find({ user: userId })
+    // Lấy travel posts của user với error handling
+    const travelPosts = await TravelPost.find({ 
+      author: userId  // Sử dụng author thay vì user theo schema
+    })
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
-      .populate('user', 'username avatar')
-      .lean() // Chuyển sang plain object để tối ưu performance
+      .populate('author', 'username avatar')
+      .lean()
       .catch(err => {
-        console.error('Error fetching posts:', err);
+        console.error('Error fetching travel posts:', err);
         return [];
       });
 
-    // Đếm tổng số posts
-    const total = await Post.countDocuments({ user: userId })
-      .catch(err => {
-        console.error('Error counting posts:', err);
-        return 0;
-      });
+    // Đếm tổng số travel posts
+    const total = await TravelPost.countDocuments({ author: userId });
 
-    // Trả về response với đầy đủ thông tin
+    // Format lại dữ liệu trước khi trả về
+    const formattedTravelPosts = travelPosts.map(post => ({
+      ...post,
+      likesCount: post.likes?.length || 0,
+      // Thêm các thông tin khác nếu cần
+      destination: {
+        type: post.destination.type,
+        coordinates: post.destination.coordinates
+      },
+      currentLocation: {
+        type: post.currentLocation.type,
+        coordinates: post.currentLocation.coordinates
+      }
+    }));
+
     res.status(200).json({
       success: true,
       data: {
-        posts,
+        travelPosts: formattedTravelPosts,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(total / limit),
@@ -401,14 +480,14 @@ router.post('/users/:userId/posts', checkAdminRole, async (req, res) => {
           avatar: user.avatar
         }
       },
-      message: posts.length ? 'Lấy danh sách bài viết thành công' : 'Người dùng chưa có bài viết'
+      message: formattedTravelPosts.length ? 'Lấy danh sách bài travel thành công' : 'Người dùng chưa có bài travel'
     });
 
   } catch (error) {
-    console.error('User posts error:', error);
+    console.error('User travel posts error:', error);
     res.status(500).json({
       success: false,
-      message: 'Lỗi server khi lấy bài viết',
+      message: 'Lỗi server khi lấy bài travel',
       error: error.message
     });
   }
@@ -510,8 +589,6 @@ router.delete('/users/:userId', checkAdminRole, async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi xóa người dùng và dữ liệu liên quan' });
   }
 });
-
-// routes/admin.js
 
 // API thống kê chi tiết
 router.post('/stats/detailed', checkAdminRole, async (req, res) => {
@@ -1027,4 +1104,159 @@ router.post('/users/all', checkAdminRole, async (req, res) => {
       });
   }
 });
+
+// Import helper functions
+const {
+  getAdminNotifications,
+  markAllAdminNotificationsAsRead,
+  deleteAdminNotification
+} = require('../config/notificationHelper');
+
+// Route lấy danh sách thông báo của admin
+router.post('/notifications', checkAdminRole, async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.body;
+    const adminId = req.user.id;
+
+    const result = await getAdminNotifications(adminId, page, limit);
+
+    // Format lại dữ liệu thông báo
+    const formattedNotifications = result.notifications.map(notification => ({
+      ...notification,
+      createdAtFormatted: new Date(notification.createdAt).toLocaleString('vi-VN'),
+      message: getNotificationMessage(notification), // Hàm helper để tạo message dựa vào type
+      priority: notification.type.includes('report') ? 'high' : 'normal'
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        notifications: formattedNotifications,
+        pagination: result.pagination,
+        unreadCount: result.notifications.filter(n => !n.read).length
+      },
+      message: 'Lấy danh sách thông báo thành công'
+    });
+
+  } catch (error) {
+    console.error('Error fetching admin notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy thông báo',
+      error: error.message
+    });
+  }
+});
+
+// Route đánh dấu đã đọc tất cả thông báo
+router.post('/notifications/mark-all-read', checkAdminRole, async (req, res) => {
+  try {
+    const adminId = req.user.id;
+    await markAllAdminNotificationsAsRead(adminId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Đã đánh dấu tất cả thông báo là đã đọc'
+    });
+
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi cập nhật thông báo',
+      error: error.message
+    });
+  }
+});
+
+// Route đánh dấu đã đọc một thông báo
+router.post('/notifications/:notificationId/mark-read', checkAdminRole, async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const adminId = req.user.id;
+
+    await markNotificationAsRead(adminId, notificationId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Đã đánh dấu thông báo là đã đọc'
+    });
+
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi cập nhật thông báo',
+      error: error.message
+    });
+  }
+});
+
+// Route xóa một thông báo
+router.delete('/notifications/:notificationId', checkAdminRole, async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const adminId = req.user.id;
+
+    await deleteAdminNotification(adminId, notificationId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Đã xóa thông báo thành công'
+    });
+
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi xóa thông báo',
+      error: error.message
+    });
+  }
+});
+
+// Helper function để tạo message cho thông báo
+function getNotificationMessage(notification) {
+  const senderName = notification.sender?.username || 'Người dùng';
+  
+  switch (notification.type) {
+    case 'new_report':
+      return `${senderName} đã gửi một báo cáo mới`;
+    case 'new_user':
+      return `${senderName} vừa đăng ký tài khoản mới`;
+    case 'new_post':
+      return `${senderName} vừa đăng một bài viết mới`;
+    case 'user_verification':
+      return `${senderName} yêu cầu xác minh tài khoản`;
+    default:
+      return `Bạn có thông báo mới từ ${senderName}`;
+  }
+}
+
+// Route lấy số lượng thông báo chưa đọc
+router.post('/notifications/unread-count', checkAdminRole, async (req, res) => {
+  try {
+    const adminId = req.user.id;
+    
+    const unreadCount = await Notification.countDocuments({
+      recipient: adminId,
+      read: false
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { unreadCount },
+      message: 'Lấy số thông báo chưa đọc thành công'
+    });
+
+  } catch (error) {
+    console.error('Error getting unread count:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy số thông báo chưa đọc',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;

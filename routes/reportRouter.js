@@ -2,23 +2,22 @@ const express = require('express');
 const router = express.Router();
 const Report = require('../models/Report');
 const User = require('../models/User');
-const  auth  = require('../middleware/auth');
+const auth = require('../middleware/auth');
 const jwt = require('jsonwebtoken');
+const {
+  createAdminNotification,
+  NOTIFICATION_TYPES
+} = require('../config/notificationHelper');
 
 const checkAdminRole = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    console.log('Received token:', token);
-
     if (!token) {
       return res.status(401).json({ message: 'Không có token' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log('Decoded token:', decoded);
-
     const user = await User.findById(decoded.id);
-    console.log('Found user:', user);
 
     if (!user || user.role !== 'admin') {
       return res.status(403).json({ message: 'Không có quyền admin' });
@@ -31,12 +30,12 @@ const checkAdminRole = async (req, res, next) => {
     res.status(401).json({ message: 'Token không hợp lệ' });
   }
 };
+
 // Create report
 router.post('/create', auth, async (req, res) => {
   try {
     const { reportedItem, itemType, reason, description } = req.body;
 
-    // Validate required fields
     if (!reportedItem || !itemType || !reason || !description) {
       return res.status(400).json({
         success: false,
@@ -44,7 +43,6 @@ router.post('/create', auth, async (req, res) => {
       });
     }
 
-    // Validate itemType
     const validItemTypes = ['User', 'Post', 'TravelPost', 'Comment'];
     if (!validItemTypes.includes(itemType)) {
       return res.status(400).json({
@@ -53,7 +51,6 @@ router.post('/create', auth, async (req, res) => {
       });
     }
 
-    // Validate reason
     const validReasons = [
       'spam',
       'harassment',
@@ -70,9 +67,8 @@ router.post('/create', auth, async (req, res) => {
       });
     }
 
-    // Create new report
     const report = new Report({
-      reporter: req.user.id, // Lấy từ middleware auth
+      reporter: req.user.id,
       reportedItem,
       itemType,
       reason,
@@ -82,14 +78,65 @@ router.post('/create', auth, async (req, res) => {
 
     await report.save();
 
-    // Populate reporter information
     const populatedReport = await Report.findById(report._id)
-      .populate('reporter', 'name email avatar')
-      .populate('reportedItem', 'name username title content images');
+      .populate('reporter', 'username email avatar')
+      .populate('reportedItem', 'username name title content images');
+
+    const admins = await User.find({ role: 'admin' });
+
+    let reportMessage = '';
+    switch (itemType) {
+      case 'User':
+        reportMessage = `Báo cáo người dùng: ${populatedReport.reportedItem.username}`;
+        break;
+      case 'Post':
+        reportMessage = `Báo cáo bài viết: "${populatedReport.reportedItem.title}"`;
+        break;
+      case 'TravelPost':
+        reportMessage = `Báo cáo bài viết du lịch: "${populatedReport.reportedItem.title}"`;
+        break;
+      case 'Comment':
+        reportMessage = `Báo cáo bình luận`;
+        break;
+    }
+
+    try {
+      const notificationPromises = admins.map(admin => 
+        createAdminNotification({
+          recipientId: admin._id,
+          senderId: req.user.id,
+          type: NOTIFICATION_TYPES.NEW_REPORT,
+          reportId: report._id.toString(),
+          senderName: populatedReport.reporter.username,
+          senderAvatar: populatedReport.reporter.avatar,
+          message: reportMessage,
+          priority: 'high',
+          metadata: {
+            reportType: itemType,
+            reason: reason,
+            description: description,
+            reportedItemId: reportedItem,
+            reportedItemType: itemType,
+            reporterInfo: {
+              id: req.user.id,
+              username: populatedReport.reporter.username
+            },
+            reportStatus: 'pending',
+            createdAt: new Date()
+          }
+        })
+      );
+
+      await Promise.all(notificationPromises);
+      console.log('Đã gửi thông báo cho tất cả admin');
+    } catch (notifError) {
+      console.error('Lỗi khi gửi thông báo cho admin:', notifError);
+    }
 
     res.status(201).json({
       success: true,
-      data: populatedReport
+      data: populatedReport,
+      message: 'Gửi báo cáo thành công'
     });
 
   } catch (error) {
@@ -100,7 +147,6 @@ router.post('/create', auth, async (req, res) => {
     });
   }
 });
-
 // Get my reports
 router.get('/my-reports', auth, async (req, res) => {
   try {
@@ -197,25 +243,20 @@ router.delete('/admin/:id', checkAdminRole, async (req, res) => {
   }
 });
 
-// Get report detail
 router.post('/admin/:id', checkAdminRole, async (req, res) => {
   try {
+    console.log('Getting report detail for ID:', req.params.id);
+    
     const report = await Report.findById(req.params.id)
       .populate('reporter', 'username email avatar')
       .populate('reportedItem', 'username name title content images avatar');
+
+    console.log('Found report:', report);
 
     if (!report) {
       return res.status(404).json({
         success: false,
         message: 'Không tìm thấy báo cáo'
-      });
-    }
-
-    // Kiểm tra quyền xem báo cáo
-    if (report.reporter.toString() !== req.user.id && !req.user.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: 'Không có quyền xem báo cáo này'
       });
     }
 
@@ -232,7 +273,6 @@ router.post('/admin/:id', checkAdminRole, async (req, res) => {
     });
   }
 });
-
 // Get report detail for user
 router.get('/user/:id', auth, async (req, res) => {
   try {

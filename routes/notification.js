@@ -3,8 +3,7 @@ const router = express.Router();
 const Notification = require('../models/Notification');
 const auth = require('../middleware/auth');
 const { admin, db } = require('../config/firebase');
-
-const notificationsRef = db.ref('notifications');
+const {createTestNotification} =require('../config/notificationHelper')
 
 // Tạo notification mới
 router.post('/', auth, async (req, res) => {

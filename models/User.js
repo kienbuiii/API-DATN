@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema({
   followingCount: { type: Number, default: 0 },
   postsCount: { type: Number, default: 0 },
   Post: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Post' }],
+ 
   sex: { type: String, default: '' },
   nationality: { type: String, default: '' },
   home: { type: String, default: '' },

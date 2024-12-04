@@ -14,6 +14,60 @@ const getCloudinaryUrl = (path) => {
   return path; // Cloudinary đã trả về URL đầy đủ, không cần thêm gì
 };
 
+// router.post('/create-post', auth, upload.array('image', 5), async (req, res) => {
+
+//   try {
+//     const { title, latitude, longitude } = req.body;
+
+//     if (!title || !latitude || !longitude) {
+//       return res.status(400).json({ message: 'Vui lòng nhập đủ tiêu đề, vị trí!' });
+//     }
+
+//     const imageUrls = req.files ? req.files.map(file => file.path) : [];
+
+//     const post = new Post({
+//       title,
+//       location: {
+//         type: 'Point',
+//         coordinates: [parseFloat(longitude), parseFloat(latitude)]
+//       },
+//       images: imageUrls,
+//       user: req.user.id
+//     });
+
+//     const savedPost = await post.save();
+
+//     // Lấy thông tin người đăng bài và danh sách followers
+//     const postUser = await User.findById(req.user.id)
+//       .select('username avatar followers');
+
+//     // Gửi thông báo cho tất cả followers
+//     if (postUser.followers && postUser.followers.length > 0) {
+//       try {
+//         const notificationPromises = postUser.followers.map(followerId => 
+//           createNotification({
+//             recipientId: followerId.toString(),
+//             senderId: req.user.id,
+//             type: 'new_post',
+//             postId: savedPost._id.toString(),
+//             senderName: postUser.username,
+//             senderAvatar: postUser.avatar
+//           })
+//         );
+
+//         await Promise.all(notificationPromises);
+//       } catch (notifError) {
+//         console.error('Error sending post notifications:', notifError);
+//         // Không throw error để vẫn tiếp tục xử lý việc tạo post
+//       }
+//     }
+
+//     res.status(201).json(savedPost);
+//   } catch (err) {
+//     console.error('Lỗi khi tạo bài viết:', err);
+//     res.status(500).json({ message: 'Lỗi khi lưu bài viết!', error: err.message });
+//   }
+// });
 router.post('/create-post', auth, upload.array('image', 5), async (req, res) => {
   try {
     const { title, latitude, longitude } = req.body;
@@ -24,6 +78,7 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
 
     const imageUrls = req.files ? req.files.map(file => file.path) : [];
 
+    // Tạo bài post mới
     const post = new Post({
       title,
       location: {
@@ -34,7 +89,18 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
       user: req.user.id
     });
 
+    // Lưu bài post
     const savedPost = await post.save();
+
+    // Cập nhật user: thêm post vào mảng Post và tăng postsCount
+    await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        $push: { Post: savedPost._id },
+        $inc: { postsCount: 1 }
+      },
+      { new: true }
+    );
 
     // Lấy thông tin người đăng bài và danh sách followers
     const postUser = await User.findById(req.user.id)
@@ -57,16 +123,31 @@ router.post('/create-post', auth, upload.array('image', 5), async (req, res) => 
         await Promise.all(notificationPromises);
       } catch (notifError) {
         console.error('Error sending post notifications:', notifError);
-        // Không throw error để vẫn tiếp tục xử lý việc tạo post
       }
     }
 
-    res.status(201).json(savedPost);
+    // Trả về response với thông tin đầy đủ hơn
+    res.status(201).json({
+      success: true,
+      data: {
+        post: savedPost,
+        user: {
+          postsCount: (postUser.Post?.length || 0) + 1
+        }
+      },
+      message: 'Tạo bài viết thành công'
+    });
+
   } catch (err) {
     console.error('Lỗi khi tạo bài viết:', err);
-    res.status(500).json({ message: 'Lỗi khi lưu bài viết!', error: err.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Lỗi khi lưu bài viết!', 
+      error: err.message 
+    });
   }
 });
+
 router.put('/edit-post/:postId', auth, upload.array('newImages', 5), async (req, res) => {
   try {
     console.log('Received edit post request:', req.body);
