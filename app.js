@@ -86,6 +86,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRouter);
 
+// Cấu hình phục vụ tệp tĩnh
+app.use(express.static('public'));
+
 // Health check route
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
