@@ -26,7 +26,11 @@ const server = http.createServer(app);
 
 // Cấu hình CORS cho Express
 app.use(cors({
-  origin: ['https://20.2.67.63','http://localhost:3001','https://moral-simple-lioness.ngrok-free.app','https://admin-web-lyart.vercel.app'],
+  origin: [
+    'www.adminftravel.xyz',
+    'http://localhost:3001',
+    
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
