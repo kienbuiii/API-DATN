@@ -27,8 +27,10 @@ const server = http.createServer(app);
 // Cấu hình CORS cho Express
 app.use(cors({
   origin: [
-    'www.adminftravel.xyz',
+    'https://www.adminftravel.xyz',
     'http://localhost:3001',
+    'https://admin-e6882bli0-kienbuiiis-projects.vercel.app',
+    'http://192.168.1.7:3001'
     
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

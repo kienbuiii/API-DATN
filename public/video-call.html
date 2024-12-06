@@ -128,8 +128,8 @@
 </head>
 <body>
     <div id="videos">
-        <div id="remote-video"></div>
-        <div id="local-video"></div>
+        <video id="remote-video" autoplay playsinline></video>
+        <video id="local-video" autoplay playsinline muted></video>
     </div>
 
     <div id="controls">
@@ -181,11 +181,14 @@
                 showStatus('Đang kết nối camera...');
 
                 // Khởi tạo local tracks
-                localTracks.audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-                localTracks.videoTrack = await AgoraRTC.createCameraVideoTrack();
+                [localTracks.audioTrack, localTracks.videoTrack] = await Promise.all([
+                    AgoraRTC.createMicrophoneAudioTrack(),
+                    AgoraRTC.createCameraVideoTrack()
+                ]);
 
                 // Hiển thị video local
-                localTracks.videoTrack.play('local-video');
+                const localVideo = document.getElementById('local-video');
+                localTracks.videoTrack.play(localVideo);
 
                 // Publish tracks
                 await client.publish(Object.values(localTracks));
@@ -195,7 +198,7 @@
 
             } catch (error) {
                 console.error('Error initializing call:', error);
-                showStatus('Lỗi kết nối');
+                showStatus('Lỗi kết nối: ' + error.message);
                 notifyParent('callError', { error: error.message });
             }
         }
@@ -205,8 +208,9 @@
             await client.subscribe(user, mediaType);
 
             if (mediaType === 'video') {
-                const remoteView = document.getElementById('remote-video');
-                user.videoTrack.play(remoteView);
+                const remoteVideo = document.getElementById('remote-video');
+                user.videoTrack.play(remoteVideo);
+                hideStatus();
             }
             if (mediaType === 'audio') {
                 user.audioTrack.play();
