@@ -11,7 +11,7 @@ router.get('/conversations', auth, async (req, res) => {
         const user = await User.findById(req.user.id)
             .populate({
                 path: 'conversations.with',
-                select: 'username avatar isOnline lastActive',
+                select: 'username avatar isOnline lastActive'
             })
             .populate({
                 path: 'conversations.lastMessage',
@@ -27,16 +27,48 @@ router.get('/conversations', auth, async (req, res) => {
             return res.json([]);
         }
 
-        // Sắp xếp và lọc conversations
-        const sortedConversations = user.conversations
-            .filter(conv => conv.lastMessage)
-            .map(conv => ({
-                ...conv,
-                lastMessage: {
-                    ...conv.lastMessage,
-                    createdAt: new Date(conv.lastMessage.createdAt).toISOString()
-                }
-            }))
+        // Thêm thông tin block status cho mỗi conversation
+        const conversationsWithBlockStatus = await Promise.all(
+            user.conversations
+                .filter(conv => conv.with && conv.with._id)
+                .map(async (conv) => {
+                    try {
+                        const otherUser = await User.findById(conv.with._id);
+                        
+                        if (!otherUser) {
+                            return null;
+                        }
+
+                        const isBlocked = user.blocked?.some(
+                            block => block?.user?.toString() === conv.with._id.toString()
+                        ) || false;
+                        
+                        const isBlockedBy = otherUser.blocked?.some(
+                            block => block?.user?.toString() === user._id.toString()
+                        ) || false;
+
+                        return {
+                            ...conv,
+                            blockStatus: {
+                                isBlocked,
+                                isBlockedBy,
+                                canMessage: !isBlocked && !isBlockedBy
+                            },
+                            lastMessage: conv.lastMessage ? {
+                                ...conv.lastMessage,
+                                createdAt: new Date(conv.lastMessage.createdAt).toISOString()
+                            } : null
+                        };
+                    } catch (error) {
+                        console.error('Error processing conversation:', error);
+                        return null;
+                    }
+                })
+        );
+
+        // Lọc bỏ các conversation null và sắp xếp
+        const sortedConversations = conversationsWithBlockStatus
+            .filter(conv => conv && conv.lastMessage)
             .sort((a, b) => 
                 new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt)
             );
@@ -44,13 +76,49 @@ router.get('/conversations', auth, async (req, res) => {
         res.json(sortedConversations);
     } catch (error) {
         console.error('Error fetching conversations:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ 
+            message: 'Internal server error',
+            error: error.message 
+        });
     }
 });
 
 // Lấy lịch sử chat
 router.get('/messages/:userId', auth, async (req, res) => {
     try {
+        const currentUser = await User.findById(req.user.id);
+        const otherUser = await User.findById(req.params.userId);
+
+        if (!currentUser || !otherUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Check if either user has blocked the other
+        const isBlockedByCurrentUser = currentUser.blocked?.some(
+            block => block?.user?.toString() === req.params.userId
+        ) || false;
+
+        const isBlockedByOtherUser = otherUser.blocked?.some(
+            block => block?.user?.toString() === req.user.id
+        ) || false;
+
+        // Trả về thông tin block status
+        const blockStatus = {
+            isBlocked: isBlockedByCurrentUser,
+            isBlockedBy: isBlockedByOtherUser,
+            canMessage: !isBlockedByCurrentUser && !isBlockedByOtherUser
+        };
+
+        // Nếu bị block, trả về block status và không có tin nhắn
+        if (isBlockedByCurrentUser || isBlockedByOtherUser) {
+            return res.json({
+                messages: [],
+                blockStatus,
+                page: 1,
+                hasMore: false
+            });
+        }
+
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const skip = (page - 1) * limit;
@@ -61,7 +129,7 @@ router.get('/messages/:userId', auth, async (req, res) => {
                 { sender: req.params.userId, receiver: req.user.id }
             ]
         })
-        .select('content type createdAt read sender')
+        .select('content type createdAt read sender receiver')
         .populate('sender', 'username avatar')
         .sort('-createdAt')
         .skip(skip)
@@ -76,29 +144,45 @@ router.get('/messages/:userId', auth, async (req, res) => {
 
         res.json({
             messages: formattedMessages.reverse(),
+            blockStatus,
             page,
             hasMore: messages.length === limit
         });
     } catch (error) {
         console.error('Error fetching messages:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ 
+            message: 'Internal server error',
+            error: error.message 
+        });
     }
 });
 
 // Lấy danh sách user online
 router.get('/online-users', auth, async (req, res) => {
     try {
+        const currentUser = await User.findById(req.user.id);
+        if (!currentUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const blockedIds = currentUser.blocked.map(block => block.user.toString());
+        const blockedByIds = (await User.find({ 
+            'blocked.user': currentUser._id 
+        })).map(user => user._id.toString());
+
+        const excludeIds = [...new Set([...blockedIds, ...blockedByIds, req.user.id])];
+
         const users = await User.find({
             isOnline: true,
-            _id: { $ne: req.user.id }
+            _id: { $nin: excludeIds }
         })
         .select('username avatar isOnline lastActive')
         .sort('-lastActive')
         .lean();
 
-        // Đảm bảo định dạng thời gian nhất quán
         const formattedUsers = users.map(user => ({
             ...user,
+            _id: user._id.toString(),
             lastActive: new Date(user.lastActive).toISOString()
         }));
 
@@ -114,7 +198,7 @@ router.post('/video-call/init', auth, async (req, res) => {
     try {
         const { receiverId } = req.body;
 
-        // Kiểm tra người nhận có online không
+        // Kiểm tra ngời nhận có online không
         const receiver = await User.findById(receiverId).select('isOnline socketId');
         if (!receiver || !receiver.isOnline) {
             return res.status(400).json({ 
