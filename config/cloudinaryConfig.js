@@ -11,22 +11,29 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'DuAnTotNghiep', // Tên folder trên Cloudinary
-    allowed_formats: ['jpg', 'png', 'jpeg', 'gif'], // Định dạng file cho phép
-    transformation: [{ width: 2000, height: 2000, crop: 'limit' }] // Tùy chọn: giới hạn kích thước ảnh
+    folder: 'DuAnTotNghiep',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'gif'],
+    transformation: [
+      { width: 1920, height: 1080, crop: 'fill', gravity: "auto" },
+      { quality: 'auto:good', fetch_format: 'auto' }
+    ],
+    resource_type: 'auto'
   }
 });
 
-const upload = multer({ storage: storage });
-
-// Hàm helper để upload ảnh lên Cloudinary
 const uploadToCloudinary = (file) => {
   return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload(file, (error, result) => {
+    cloudinary.uploader.upload(file, {
+      transformation: [
+        { width: 1920, height: 1080, crop: 'fill', gravity: "auto" },
+        { quality: 'auto:good', fetch_format: 'auto' }
+      ],
+      resource_type: 'auto'
+    }, (error, result) => {
       if (error) reject(error);
       else resolve(result);
     });
   });
 };
 
-module.exports = { cloudinary, upload, uploadToCloudinary };
+module.exports = { cloudinary, upload: multer({ storage: storage }), uploadToCloudinary };
