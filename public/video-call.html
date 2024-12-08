@@ -35,6 +35,10 @@
             height: 100%;
             z-index: 1;
             object-fit: cover;
+            /* Thêm thuộc tính để loại bỏ các điều khiển mặc định */
+            -webkit-user-select: none;
+            user-select: none;
+            pointer-events: none;
         }
 
         #local-video {
@@ -46,6 +50,9 @@
             z-index: 2;
             border-radius: 10px;
             overflow: hidden;
+            -webkit-user-select: none;
+            user-select: none;
+            pointer-events: none;
         }
 
         #controls {
@@ -73,6 +80,7 @@
             background-color: rgba(255, 255, 255, 0.2);
             color: white;
             transition: all 0.3s ease;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .control-button:hover {
@@ -94,8 +102,22 @@
 </head>
 <body>
     <div id="videos">
-        <video id="remote-video" autoplay playsinline></video>
-        <video id="local-video" autoplay playsinline muted></video>
+        <video 
+            id="remote-video" 
+            autoplay 
+            playsinline 
+            muted 
+            disablePictureInPicture 
+            controlsList="nodownload noplaybackrate"
+        ></video>
+        <video 
+            id="local-video" 
+            autoplay 
+            playsinline 
+            muted 
+            disablePictureInPicture 
+            controlsList="nodownload noplaybackrate"
+        ></video>
     </div>
 
     <div id="controls">
@@ -122,92 +144,171 @@
             videoTrack: null
         };
 
+        // Thêm hàm xử lý lỗi toàn cục
+        window.addEventListener('error', function(event) {
+            notifyParent('globalError', { 
+                message: event.message, 
+                filename: event.filename, 
+                lineno: event.lineno 
+            });
+        });
+
         async function initializeAndJoin() {
             try {
+                // Kiểm tra kết nối mạng
+                if (!navigator.onLine) {
+                    notifyParent('networkError', { message: 'No internet connection' });
+                    return;
+                }
+
                 client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
                 
                 client.on('user-published', handleUserPublished);
                 client.on('user-unpublished', handleUserUnpublished);
                 client.on('user-left', handleUserLeft);
+                client.on('connection-state-change', handleConnectionStateChange);
 
                 await client.join(APP_ID, channelName, null, userId);
 
                 [localTracks.audioTrack, localTracks.videoTrack] = await Promise.all([
                     AgoraRTC.createMicrophoneAudioTrack(),
-                    AgoraRTC.createCameraVideoTrack()
+                    AgoraRTC.createCameraVideoTrack({
+                        // Thêm các cấu hình cho iOS
+                        encoderConfig: {
+                            width: { ideal: 720 },
+                            height: { ideal: 1280 },
+                            frameRate: { ideal: 30, max: 30 }
+                        }
+                    })
                 ]);
 
-                localTracks.videoTrack.play('local-video');
+                // Cấu hình video cho iOS
+                localTracks.videoTrack.play('local-video', { fit: 'cover' });
                 await client.publish(Object.values(localTracks));
                 
                 notifyParent('callConnected');
             } catch (error) {
-                console.error('Error:', error);
-                notifyParent('callError', { error: error.message });
+                console.error('Initialization Error:', error);
+                notifyParent('callError', { 
+                    error: error.message, 
+                    code: error.code || 'UNKNOWN_ERROR' 
+                });
             }
+        }
+
+        function handleConnectionStateChange(currentState, previousState) {
+            notifyParent('connectionStateChange', {
+                currentState,
+                previousState
+            });
         }
 
         async function handleUserPublished(user, mediaType) {
-            await client.subscribe(user, mediaType);
-            if (mediaType === 'video') {
-                user.videoTrack.play('remote-video');
-            }
-            if (mediaType === 'audio') {
-                user.audioTrack.play();
+            try {
+                await client.subscribe(user, mediaType);
+                if (mediaType === 'video') {
+                    // Xử lý video cho iOS
+                    const videoTrack = user.videoTrack;
+                    videoTrack.play('remote-video', { fit: 'cover' });
+                }
+                if (mediaType === 'audio') {
+                    user.audioTrack.play();
+                }
+            } catch (error) {
+                console.error('Subscribe Error:', error);
+                notifyParent('subscribeError', { 
+                    error: error.message,
+                    mediaType 
+                });
             }
         }
 
-        function handleUserUnpublished(user) {
-            // Handle when remote user stops publishing
+        function handleUserUnpublished(user, mediaType) {
+            notifyParent('userUnpublished', { 
+                userId: user.uid, 
+                mediaType 
+            });
         }
 
-        function handleUserLeft() {
+        function handleUserLeft(user) {
+            notifyParent('userLeft', { userId: user.uid });
             leaveCall();
         }
 
         async function leaveCall() {
-            Object.values(localTracks).forEach(track => {
-                if (track) {
-                    track.stop();
-                    track.close();
-                }
-            });
+            try {
+                Object.values(localTracks).forEach(track => {
+                    if (track) {
+                        track.stop();
+                        track.close();
+                    }
+                });
 
-            await client.leave();
-            notifyParent('callEnded');
+                if (client) {
+                    await client.leave();
+                }
+                
+                notifyParent('callEnded');
+            } catch (error) {
+                console.error('Leave Call Error:', error);
+                notifyParent('leaveCallError', { error: error.message });
+            }
         }
 
         async function toggleMic() {
             if (localTracks.audioTrack) {
-                await localTracks.audioTrack.setEnabled(!localTracks.audioTrack.enabled);
-                document.getElementById('mic-btn').classList.toggle('muted');
-                document.querySelector('#mic-btn i').className = 
-                    localTracks.audioTrack.enabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+                const currentState = localTracks.audioTrack.enabled;
+                await localTracks.audioTrack.setEnabled(!currentState);
+                
+                const micBtn = document.getElementById('mic-btn');
+                const micIcon = document.querySelector('#mic-btn i');
+                
+                micBtn.classList.toggle('muted', !currentState);
+                micIcon.className = currentState 
+                    ? 'fas fa-microphone-slash' 
+                    : 'fas fa-microphone';
+
+                notifyParent('micToggled', { muted: !currentState });
             }
         }
 
         async function toggleVideo() {
             if (localTracks.videoTrack) {
-                await localTracks.videoTrack.setEnabled(!localTracks.videoTrack.enabled);
-                document.getElementById('camera-btn').classList.toggle('video-off');
-                document.querySelector('#camera-btn i').className = 
-                    localTracks.videoTrack.enabled ? 'fas fa-video' : 'fas fa-video-slash';
+                const currentState = localTracks.videoTrack.enabled;
+                await localTracks.videoTrack.setEnabled(!currentState);
+                
+                const cameraBtn = document.getElementById('camera-btn');
+                const cameraIcon = document.querySelector('#camera-btn i');
+                
+                cameraBtn.classList.toggle('video-off', !currentState);
+                cameraIcon.className = currentState 
+                    ? 'fas fa-video-slash' 
+                    : 'fas fa-video';
+
+                notifyParent('videoToggled', { videoOff: !currentState });
             }
         }
 
         function notifyParent(type, data = {}) {
-            window.ReactNativeWebView?.postMessage(JSON.stringify({
-                type,
-                ...data
-            }));
+            try {
+                window.ReactNativeWebView?.postMessage(JSON.stringify({
+                    type,
+                    ...data
+                }));
+            } catch (error) {
+                console.error('Notify Parent Error:', error);
+            }
         }
 
+        // Thêm các trình nghe sự kiện
         document.getElementById('mic-btn').addEventListener('click', toggleMic);
         document.getElementById('camera-btn').addEventListener('click', toggleVideo);
         document.getElementById('end-call-btn').addEventListener('click', leaveCall);
 
+        // Xử lý các sự kiện điều hướng
         window.onload = initializeAndJoin;
         window.onbeforeunload = leaveCall;
+        window.onunload = leaveCall;
     </script>
 </body>
 </html>
