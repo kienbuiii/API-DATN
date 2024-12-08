@@ -53,6 +53,25 @@ const chatHandler = (io, socket) => {
                 .populate('sender', 'username avatar')
                 .lean();
 
+            // Kiểm tra nếu receiver là admin
+            const receiver = await User.findById(receiverId);
+            if (receiver && receiver.role === 'admin') {
+                // Gửi tin nhắn đến admin room
+                io.to(`admin_${receiverId}`).emit('receive_message', {
+                    ...populatedMessage,
+                    isAdminMessage: false
+                });
+            } else {
+                // Gửi tin nhắn đến user bình thường
+                io.to(`user_${receiverId}`).emit('receive_message', populatedMessage);
+            }
+
+            // Gửi xác nhận cho sender
+            socket.emit('message_sent', {
+                ...populatedMessage,
+                tempId
+            });
+
             // Cập nhật hoặc tạo conversation cho cả sender và receiver
             const updateConversation = async (userId, partnerId, unreadCount) => {
                 const user = await User.findById(userId);
@@ -85,7 +104,7 @@ const chatHandler = (io, socket) => {
                 updateConversation(receiverId, senderId, 1)
             ]);
 
-            // Gửi tin nhắn và cập nhật conversation
+            // Gửi cập nhật conversation
             const conversationUpdate = {
                 messageId: newMessage._id,
                 content,
@@ -95,16 +114,13 @@ const chatHandler = (io, socket) => {
                 type
             };
 
-            // Gửi cho receiver
-            io.to(`user_${receiverId}`).emit('receive_message', populatedMessage);
-            io.to(`user_${receiverId}`).emit('conversation_updated', conversationUpdate);
-
-            // Gửi xác nhận cho sender
-            socket.emit('message_sent', {
-                ...populatedMessage,
-                tempId
-            });
+            // Gửi cập nhật cho cả sender và receiver
             socket.emit('conversation_updated', conversationUpdate);
+            if (receiver && receiver.role === 'admin') {
+                io.to(`admin_${receiverId}`).emit('conversation_updated', conversationUpdate);
+            } else {
+                io.to(`user_${receiverId}`).emit('conversation_updated', conversationUpdate);
+            }
 
         } catch (error) {
             console.error('Error in send_message:', error);

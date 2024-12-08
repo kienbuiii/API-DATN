@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 const Message = require('../models/Message'); // Thêm import Message model
 const mongoose = require('mongoose');
 const { ObjectId } = mongoose.Types;
-// Middleware kiểm tra role admin
+
 // Trong middleware checkAdminRole
 const checkAdminRole = async (req, res, next) => {
   try {
@@ -453,7 +453,7 @@ router.post('/users/:userId/travel', checkAdminRole, async (req, res) => {
     const formattedTravelPosts = travelPosts.map(post => ({
       ...post,
       likesCount: post.likes?.length || 0,
-      // Thêm các thông tin khác nếu cần
+      // Thêm các thng tin khác nếu cần
       destination: {
         type: post.destination.type,
         coordinates: post.destination.coordinates
@@ -493,28 +493,82 @@ router.post('/users/:userId/travel', checkAdminRole, async (req, res) => {
   }
 });
 
-// API cập nhật trạng thái người dùng
-router.patch('/users/:userId/status', checkAdminRole, async (req, res) => {
+router.post('/users/:userId/posts', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { status } = req.body;
+    const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = -1 } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { status },
-      { new: true }
-    ).select('-password');
-
+    // Kiểm tra user có tồn tại không
+    const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
     }
 
-    res.json({ message: 'Cập nhật trạng thái thành công', user });
+    // Tính toán skip cho pagination
+    const skip = (page - 1) * limit;
+
+    // Lấy posts của user với populate và sorting
+    const [posts, total] = await Promise.all([
+      Post.find({ user: userId })
+        .sort({ [sortBy]: sortOrder })
+        .skip(skip)
+        .limit(limit)
+        .populate('user', 'username avatar')
+        .populate({
+          path: 'comments',
+          populate: {
+            path: 'user',
+            select: 'username avatar'
+          }
+        })
+        .lean(),
+      Post.countDocuments({ user: userId })
+    ]);
+
+    // Format và thêm thông tin cho mỗi post
+    const enhancedPosts = posts.map(post => ({
+      ...post,
+      stats: {
+        likesCount: post.likes?.length || 0,
+        commentsCount: post.comments?.length || 0,
+        sharesCount: post.shares?.length || 0
+      },
+      createdAtFormatted: new Date(post.createdAt).toLocaleString('vi-VN'),
+      updatedAtFormatted: new Date(post.updatedAt).toLocaleString('vi-VN')
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        posts: enhancedPosts,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalPosts: total,
+          limit: parseInt(limit)
+        },
+        user: {
+          _id: user._id,
+          username: user.username,
+          avatar: user.avatar
+        }
+      },
+      message: enhancedPosts.length ? 'Lấy danh sách bài viết thành công' : 'Người dùng chưa có bài viết'
+    });
+
   } catch (error) {
-    console.error('Lỗi cập nhật trạng thái:', error);
-    res.status(500).json({ message: 'Lỗi server' });
+    console.error('User posts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy bài viết',
+      error: error.message
+    });
   }
 });
+
 
 // API xóa người dùng và tất cả dữ liệu liên quan
 router.delete('/users/:userId', checkAdminRole, async (req, res) => {
@@ -674,7 +728,7 @@ router.post('/dashboard-stats', checkAdminRole, async (req, res) => {
         },
         lastUpdated: new Date()
       },
-      message: 'Lấy thống kê thành công'
+      message: 'Lấấy thống kê thành công'
     });
 
   } catch (error) {
@@ -686,11 +740,48 @@ router.post('/dashboard-stats', checkAdminRole, async (req, res) => {
     });
   }
 });
-// vô hiệu hóa tài khoản
+
+// API lấy trạng thái vô hiệu hóa của người dùng
+router.post('/users/:userId/status', checkAdminRole, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId)
+      .select('vohieuhoa username email')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        userId: user._id,
+        username: user.username,
+        email: user.email,
+        vohieuhoa: user.vohieuhoa
+      },
+      message: 'Lấy trạng thái người dùng thành công'
+    });
+
+  } catch (error) {
+    console.error('Lỗi lấy trạng thái:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy trạng thái người dùng',
+      error: error.message
+    });
+  }
+});
+
 router.post('/users/:userId/disable', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { vohieuhoa } = req.body; // Truyền giá trị từ body nếu có, nếu không, mặc định là true
+    const { vohieuhoa } = req.body; // Truyền giá trị t��� body nếu có, nếu không, mặc định là true
 
     // Nếu không có giá trị vohieuhoa trong body, set nó mặc định là true
     const disableStatus = vohieuhoa !== undefined ? vohieuhoa : true;
@@ -727,8 +818,6 @@ router.post('/users/:userId/disable', checkAdminRole, async (req, res) => {
     });
   }
 });
-
-
 router.post('/users/:userId/enable', checkAdminRole, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -792,61 +881,6 @@ router.post('/chat/:userId', checkAdminRole, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Lỗi server khi lấy lịch sử chat',
-            error: error.message
-        });
-    }
-});
-
-// API gửi tin nhắn từ admin
-router.post('/chat/send/:userId', checkAdminRole, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { content, type = 'text' } = req.body;
-        const adminId = req.user._id;
-
-        if (!ObjectId.isValid(userId) || !ObjectId.isValid(adminId)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid ID format'
-            });
-        }
-
-        const newMessage = new Message({
-            sender: adminId,
-            receiver: userId,
-            content,
-            type,
-            isAdminMessage: true
-        });
-
-        await newMessage.save();
-
-        const populatedMessage = await Message.findById(newMessage._id)
-            .populate('sender', 'username avatar')
-            .populate('receiver', 'username avatar');
-
-        // Emit socket event nếu có socket.io
-        if (req.app.get('io')) {
-            const io = req.app.get('io');
-            const userSocket = await User.findById(userId).select('socketId');
-            if (userSocket?.socketId) {
-                io.to(userSocket.socketId).emit('newMessage', {
-                    message: populatedMessage
-                });
-            }
-        }
-
-        res.json({
-            success: true,
-            data: populatedMessage,
-            message: 'Gửi tin nhắn thành công'
-        });
-
-    } catch (error) {
-        console.error('Error sending message:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Lỗi server khi gửi tin nhắn',
             error: error.message
         });
     }
@@ -1063,7 +1097,7 @@ router.post('/users/all', checkAdminRole, async (req, res) => {
               .sort({ [sortBy]: sortOrder })
               .skip(skip)
               .limit(limit)
-              .lean(), // Chuyển sang plain object để tăng performance
+              .lean(), // Chuyểển sang plain object để tăng performance
           User.countDocuments(query)
       ]);
 
@@ -1104,6 +1138,7 @@ router.post('/users/all', checkAdminRole, async (req, res) => {
       });
   }
 });
+
 
 // Import helper functions
 const {
@@ -1258,5 +1293,65 @@ router.post('/notifications/unread-count', checkAdminRole, async (req, res) => {
     });
   }
 });
+
+// API lấy danh sách người dùng online cho admin
+router.post('/online-users', checkAdminRole, async (req, res) => {
+  try {
+      const adminId = req.user.id;
+      
+      // Kiểm tra admin
+      const admin = await User.findById(adminId);
+      if (!admin || admin.role !== 'admin') {
+          return res.status(403).json({ 
+              success: false,
+              message: 'Không có quyền truy cập' 
+          });
+      }
+
+      // Lấy danh sách người dùng online (không bao gồm admin)
+      const onlineUsers = await User.find({
+          isOnline: true,
+          role: { $ne: 'admin' }  // Không lấy các admin khác
+      })
+      .select('username avatar isOnline lastActive email role vohieuhoa verified')
+      .sort('-lastActive')
+      .lean();
+
+      // Format dữ liệu trả về
+      const formattedUsers = onlineUsers.map(user => ({
+          ...user,
+          _id: user._id.toString(),
+          lastActive: new Date(user.lastActive).toISOString(),
+          status: 'online'
+      }));
+
+      // Thêm thống kê
+      const statistics = {
+          totalOnline: formattedUsers.length,
+          verifiedCount: formattedUsers.filter(user => user.verified).length,
+          normalUserCount: formattedUsers.filter(user => user.role === 'user').length
+      };
+
+      res.json({
+          success: true,
+          data: {
+              users: formattedUsers,
+              statistics,
+              timestamp: new Date().toISOString()
+          },
+          message: 'Lấy danh sách người dùng online thành công'
+      });
+
+  } catch (error) {
+      console.error('Error fetching online users:', error);
+      res.status(500).json({ 
+          success: false,
+          message: 'Lỗi server khi lấy danh sách người dùng online',
+          error: error.message
+      });
+  }
+});
+
+
 
 module.exports = router;

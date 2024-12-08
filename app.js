@@ -30,8 +30,8 @@ app.use(cors({
     'https://www.adminftravel.xyz',
     'http://localhost:3001',
     'https://admin-e6882bli0-kienbuiiis-projects.vercel.app',
-    'http://192.168.1.7:3001'
-    
+    'http://192.168.1.7:3001',
+    'https://lobster-upward-sunbeam.ngrok-free.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -41,7 +41,13 @@ app.use(cors({
 // Cấu hình Socket.IO với CORS và tối ưu hóa
 const io = socketIo(server, {
   cors: {
-    origin: "*",
+    origin: [
+      'https://www.adminftravel.xyz',
+      'http://localhost:3001',
+      'https://admin-e6882bli0-kienbuiiis-projects.vercel.app',
+      'http://192.168.1.7:3001',
+      'https://lobster-upward-sunbeam.ngrok-free.app'
+    ],
     methods: ["GET", "POST"],
     allowedHeaders: ["Authorization"],
     credentials: true
