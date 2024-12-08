@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Video Call</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
-    <!-- AgoraRTC SDK -->
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.19.3.js"></script>
     <style>
         * {
@@ -36,7 +35,6 @@
             height: 100%;
             z-index: 1;
             object-fit: cover;
-            background-color: #000;
         }
 
         #local-video {
@@ -48,8 +46,6 @@
             z-index: 2;
             border-radius: 10px;
             overflow: hidden;
-            background-color: #333;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
         #controls {
@@ -94,36 +90,6 @@
         .control-button.muted, .control-button.video-off {
             background-color: #666;
         }
-
-        #status-message {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 4;
-            color: white;
-            font-size: 1.2em;
-            text-align: center;
-            background-color: rgba(0, 0, 0, 0.7);
-            padding: 15px 30px;
-            border-radius: 10px;
-            display: none;
-        }
-
-        .loading-spinner {
-            border: 3px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            border-top: 3px solid #fff;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-            margin: 10px auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
     </style>
 </head>
 <body>
@@ -144,13 +110,8 @@
         </button>
     </div>
 
-    <div id="status-message">
-        <span id="status-text">Đang kết nối...</span>
-        <div class="loading-spinner"></div>
-    </div>
-
     <script>
-        const APP_ID = "47d2012f336d49d1bfedc3d2401ae99c"; // Thay thế bằng Agora App ID của bạn
+        const APP_ID = "47d2012f336d49d1bfedc3d2401ae99c";
         const urlParams = new URLSearchParams(window.location.search);
         const channelName = urlParams.get('channel');
         const userId = urlParams.get('userId');
@@ -160,143 +121,80 @@
             audioTrack: null,
             videoTrack: null
         };
-        let remoteUsers = {};
-        let isAudioMuted = false;
-        let isVideoMuted = false;
 
-        // Khởi tạo client và tham gia kênh
         async function initializeAndJoin() {
-            showStatus('Đang khởi tạo...');
-            
             try {
                 client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
                 
-                // Xử lý sự kiện user joined
                 client.on('user-published', handleUserPublished);
                 client.on('user-unpublished', handleUserUnpublished);
                 client.on('user-left', handleUserLeft);
 
-                // Tham gia kênh
                 await client.join(APP_ID, channelName, null, userId);
-                showStatus('Đang kết nối camera...');
 
-                // Khởi tạo local tracks
                 [localTracks.audioTrack, localTracks.videoTrack] = await Promise.all([
                     AgoraRTC.createMicrophoneAudioTrack(),
                     AgoraRTC.createCameraVideoTrack()
                 ]);
 
-                // Hiển thị video local
-                const localVideo = document.getElementById('local-video');
-                localTracks.videoTrack.play(localVideo);
-
-                // Publish tracks
+                localTracks.videoTrack.play('local-video');
                 await client.publish(Object.values(localTracks));
                 
-                hideStatus();
                 notifyParent('callConnected');
-
             } catch (error) {
-                console.error('Error initializing call:', error);
-                showStatus('Lỗi kết nối: ' + error.message);
+                console.error('Error:', error);
                 notifyParent('callError', { error: error.message });
             }
         }
 
-        // Xử lý khi có user mới tham gia
         async function handleUserPublished(user, mediaType) {
             await client.subscribe(user, mediaType);
-
             if (mediaType === 'video') {
-                const remoteVideo = document.getElementById('remote-video');
-                user.videoTrack.play(remoteVideo);
-                hideStatus();
+                user.videoTrack.play('remote-video');
             }
             if (mediaType === 'audio') {
                 user.audioTrack.play();
             }
         }
 
-        // Xử lý khi user ngừng publish media
         function handleUserUnpublished(user) {
-            // Có thể thêm xử lý UI khi user tắt camera/mic
+            // Handle when remote user stops publishing
         }
 
-        // Xử lý khi user rời khỏi cuộc gọi
-        function handleUserLeft(user) {
-            showStatus('Người dùng đã rời khỏi cuộc gọi');
-            setTimeout(() => {
-                leaveCall();
-            }, 2000);
+        function handleUserLeft() {
+            leaveCall();
         }
 
-        // Xử lý kết thúc cuộc gọi
         async function leaveCall() {
-            try {
-                // Dừng và đóng local tracks
-                Object.values(localTracks).forEach(track => {
-                    if (track) {
-                        track.stop();
-                        track.close();
-                    }
-                });
+            Object.values(localTracks).forEach(track => {
+                if (track) {
+                    track.stop();
+                    track.close();
+                }
+            });
 
-                // Rời khỏi kênh
-                await client.leave();
-                
-                notifyParent('callEnded');
-            } catch (error) {
-                console.error('Error leaving call:', error);
-                notifyParent('callError', { error: error.message });
-            }
+            await client.leave();
+            notifyParent('callEnded');
         }
 
-        // Xử lý bật/tắt mic
         async function toggleMic() {
             if (localTracks.audioTrack) {
-                if (isAudioMuted) {
-                    await localTracks.audioTrack.setEnabled(true);
-                    document.getElementById('mic-btn').classList.remove('muted');
-                    document.querySelector('#mic-btn i').className = 'fas fa-microphone';
-                } else {
-                    await localTracks.audioTrack.setEnabled(false);
-                    document.getElementById('mic-btn').classList.add('muted');
-                    document.querySelector('#mic-btn i').className = 'fas fa-microphone-slash';
-                }
-                isAudioMuted = !isAudioMuted;
+                await localTracks.audioTrack.setEnabled(!localTracks.audioTrack.enabled);
+                document.getElementById('mic-btn').classList.toggle('muted');
+                document.querySelector('#mic-btn i').className = 
+                    localTracks.audioTrack.enabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
             }
         }
 
-        // Xử lý bật/tắt camera
         async function toggleVideo() {
             if (localTracks.videoTrack) {
-                if (isVideoMuted) {
-                    await localTracks.videoTrack.setEnabled(true);
-                    document.getElementById('camera-btn').classList.remove('video-off');
-                    document.querySelector('#camera-btn i').className = 'fas fa-video';
-                } else {
-                    await localTracks.videoTrack.setEnabled(false);
-                    document.getElementById('camera-btn').classList.add('video-off');
-                    document.querySelector('#camera-btn i').className = 'fas fa-video-slash';
-                }
-                isVideoMuted = !isVideoMuted;
+                await localTracks.videoTrack.setEnabled(!localTracks.videoTrack.enabled);
+                document.getElementById('camera-btn').classList.toggle('video-off');
+                document.querySelector('#camera-btn i').className = 
+                    localTracks.videoTrack.enabled ? 'fas fa-video' : 'fas fa-video-slash';
             }
         }
 
-        // Hiển thị thông báo trạng thái
-        function showStatus(message) {
-            const statusElement = document.getElementById('status-message');
-            const statusText = document.getElementById('status-text');
-            statusText.textContent = message;
-            statusElement.style.display = 'block';
-        }
-
-        // Ẩn thông báo trạng thái
-        function hideStatus() {
-            document.getElementById('status-message').style.display = 'none';
-        }
-
-        // Gửi thông báo cho React Native WebView
         function notifyParent(type, data = {}) {
             window.ReactNativeWebView?.postMessage(JSON.stringify({
                 type,
@@ -304,15 +202,11 @@
             }));
         }
 
-        // Thêm event listeners
         document.getElementById('mic-btn').addEventListener('click', toggleMic);
         document.getElementById('camera-btn').addEventListener('click', toggleVideo);
         document.getElementById('end-call-btn').addEventListener('click', leaveCall);
 
-        // Khởi tạo cuộc gọi khi trang được load
         window.onload = initializeAndJoin;
-
-        // Xử lý khi người dùng rời trang
         window.onbeforeunload = leaveCall;
     </script>
 </body>

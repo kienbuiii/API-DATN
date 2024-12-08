@@ -197,29 +197,6 @@ router.get('/online-users', auth, async (req, res) => {
 router.post('/video-call/init', auth, async (req, res) => {
     try {
         const { receiverId } = req.body;
-
-        // Kiểm tra ngời nhận có online không
-        const receiver = await User.findById(receiverId).select('isOnline socketId');
-        if (!receiver || !receiver.isOnline) {
-            return res.status(400).json({ 
-                message: 'Người dùng không trực tuyến' 
-            });
-        }
-
-        // Kiểm tra xem người nhận có đang trong cuộc gọi khác không
-        const existingCall = await VideoCall.findOne({
-            $or: [
-                { caller: receiverId, status: 'active' },
-                { receiver: receiverId, status: 'active' }
-            ]
-        });
-
-        if (existingCall) {
-            return res.status(400).json({
-                message: 'Người dùng đang trong cuộc gọi khác'
-            });
-        }
-
         const channelName = `${req.user.id}-${receiverId}-${Date.now()}`;
         
         // Lấy thông tin người gọi
@@ -238,6 +215,7 @@ router.post('/video-call/init', auth, async (req, res) => {
         await newCall.save();
 
         const io = req.app.get('io');
+        const receiver = await User.findById(receiverId).select('socketId');
         
         // Gửi thông báo đến người nhận
         io.to(receiver.socketId).emit('incoming_call', {
@@ -249,15 +227,13 @@ router.post('/video-call/init', auth, async (req, res) => {
         });
 
         // Tạo timeout để tự động hủy cuộc gọi nếu không có phản hồi
-        const timeoutId = setTimeout(async () => {
+        setTimeout(async () => {
             try {
-                // Cập nhật trạng thái cuộc gọi
                 await VideoCall.findOneAndUpdate(
                     { channelName },
                     { status: 'missed', endTime: new Date() }
                 );
 
-                // Thông báo cho cả hai bên
                 io.to(receiver.socketId).emit('call_timeout', {
                     channelName,
                     callerId: req.user.id
@@ -271,9 +247,6 @@ router.post('/video-call/init', auth, async (req, res) => {
                 console.error('Timeout handling error:', error);
             }
         }, 30000);
-
-        // Lưu timeoutId vào cache hoặc database để có thể hủy nếu cần
-        // Ví dụ: await cache.set(`call_timeout:${channelName}`, timeoutId);
         
         res.json({ 
             channelName,
@@ -332,7 +305,7 @@ router.post('/video-call/reject', auth, async (req, res) => {
             { channelName, status: 'pending' },
             { status: 'rejected', endTime: new Date() },
             { new: true }
-        );
+        ).populate('caller', 'socketId');
 
         if (!call) {
             return res.status(404).json({
@@ -343,10 +316,13 @@ router.post('/video-call/reject', auth, async (req, res) => {
         const io = req.app.get('io');
         
         // Thông báo cho người gọi
-        io.to(call.caller.socketId).emit('call_rejected', {
-            channelName,
-            receiverId: req.user.id
-        });
+        if (call.caller?.socketId) {
+            io.to(call.caller.socketId).emit('call_rejected', {
+                channelName,
+                receiverId: req.user.id,
+                message: 'Người dùng từ chối cuộc gọi'
+            });
+        }
 
         res.json({ 
             success: true,
