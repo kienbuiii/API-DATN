@@ -29,8 +29,8 @@ app.use(cors({
   origin: [
     'https://www.adminftravel.xyz',
     'http://localhost:3001',
-    'https://admin-e6882bli0-kienbuiiis-projects.vercel.app',
-    'http://192.168.1.7:3001',
+    'https://adminftravel.xyz',
+    'http://192.168.137.1:3001',
     'https://lobster-upward-sunbeam.ngrok-free.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -44,8 +44,8 @@ const io = socketIo(server, {
     origin: [
       'https://www.adminftravel.xyz',
       'http://localhost:3001',
-      'https://admin-e6882bli0-kienbuiiis-projects.vercel.app',
-      'http://192.168.1.7:3001',
+      'https://adminftravel.xyz',
+      'http://192.168.137.1:3001',
       'https://lobster-upward-sunbeam.ngrok-free.app'
     ],
     methods: ["GET", "POST"],
@@ -157,14 +157,4 @@ process.on('unhandledRejection', (err) => {
   console.log('Unhandled Rejection:', err);
 });
 
-// Firebase Admin Cleanup on shutdown
-process.on('SIGINT', async () => {
-  try {
-    await admin.app().delete();
-    console.log('Firebase Admin SDK cleaned up.');
-    process.exit(0);
-  } catch (error) {
-    console.error('Error cleaning up Firebase Admin:', error);
-    process.exit(1);
-  }
-});
+
