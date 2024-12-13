@@ -26,7 +26,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-const apiKey = 'WklHCKbxxqKFIoga1Nbto2eB979gbnCf';  // Thay bằng API Key của bạn
+const apiKey = 'abp4kSb8XSHkDXDMYI3m81dpJal174Ep';  // Thay bằng API Key của bạn
 
 // Endpoint để nhận và xử lý file ảnh
 router.post('/scan-cccd', upload.single('image'), (req, res) => {
