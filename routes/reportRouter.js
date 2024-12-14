@@ -216,6 +216,7 @@ router.post('/admin/:id', checkAdminRole, async (req, res) => {
       error: 'Không thể cập nhật trạng thái báo cáo' 
     });
   }
+  
 });
 
 // Delete report (admin only)
@@ -243,7 +244,7 @@ router.delete('/admin/:id', checkAdminRole, async (req, res) => {
   }
 });
 
-router.post('/admin/:id', checkAdminRole, async (req, res) => {
+router.post('/admin/detail/:id', checkAdminRole, async (req, res) => {
   try {
     console.log('Getting report detail for ID:', req.params.id);
     

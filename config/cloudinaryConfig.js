@@ -14,8 +14,7 @@ const storage = new CloudinaryStorage({
     folder: 'DuAnTotNghiep',
     allowed_formats: ['jpg', 'png', 'jpeg', 'gif'],
     transformation: [
-      { width: 1920, height: 1080, crop: 'fill', gravity: "auto" },
-      { quality: 'auto:good', fetch_format: 'auto' }
+      { quality: 'auto:best' }
     ],
     resource_type: 'auto'
   }
@@ -24,10 +23,7 @@ const storage = new CloudinaryStorage({
 const uploadToCloudinary = (file) => {
   return new Promise((resolve, reject) => {
     cloudinary.uploader.upload(file, {
-      transformation: [
-        { width: 1920, height: 1080, crop: 'fill', gravity: "auto" },
-        { quality: 'auto:good', fetch_format: 'auto' }
-      ],
+      quality: 'auto:best',
       resource_type: 'auto'
     }, (error, result) => {
       if (error) reject(error);
